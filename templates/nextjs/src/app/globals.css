@@ -4,4 +4,8 @@
 body {
 	font-family: 'Inter';
 	overscroll-behavior: none;
+
+	.tl-watermark_SEE-LICENSE {
+		visibility: hidden;
+	}
 }
