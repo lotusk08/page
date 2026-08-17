@@ -2,7 +2,7 @@ import { useValue } from '@tldraw/state-react'
 import { useEffect } from 'react'
 import { Editor } from '../editor/Editor'
 import { TLKeyboardEventInfo } from '../editor/types/event-types'
-import { activeElementShouldCaptureKeys, preventDefault, stopEventPropagation } from '../utils/dom'
+import { activeElementShouldCaptureKeys, preventDefault } from '../utils/dom'
 import { isAccelKey } from '../utils/keyboard'
 import { useContainer } from './useContainer'
 import { useEditor } from './useEditor'
@@ -29,7 +29,7 @@ export function useDocumentEvents() {
 			// re-dispatched, which would lead to an infinite loop.
 			if ((e as any).isSpecialRedispatchedEvent) return
 			preventDefault(e)
-			stopEventPropagation(e)
+			e.stopPropagation()
 			const cvs = container.querySelector('.tl-canvas')
 			if (!cvs) return
 			const newEvent = new DragEvent(e.type, e)
@@ -46,7 +46,8 @@ export function useDocumentEvents() {
 	}, [container])
 
 	useEffect(() => {
-		if (typeof window === 'undefined' || !('matchMedia' in window)) return
+		const win = editor.getContainerWindow()
+		if (!('matchMedia' in win)) return
 
 		// https://developer.mozilla.org/en-US/docs/Web/API/Window/devicePixelRatio#monitoring_screen_resolution_or_zoom_level_changes
 		let remove: (() => void) | null = null
@@ -54,8 +55,8 @@ export function useDocumentEvents() {
 			if (remove != null) {
 				remove()
 			}
-			const mqString = `(resolution: ${window.devicePixelRatio}dppx)`
-			const media = matchMedia(mqString)
+			const mqString = `(resolution: ${win.devicePixelRatio}dppx)`
+			const media = win.matchMedia(mqString)
 			// Safari only started supporting `addEventListener('change',...) in version 14
 			// https://developer.mozilla.org/en-US/docs/Web/API/MediaQueryList/change_event
 			const safariCb = (ev: any) => {
@@ -79,7 +80,7 @@ export function useDocumentEvents() {
 					media.removeListener(safariCb)
 				}
 			}
-			editor.updateInstanceState({ devicePixelRatio: window.devicePixelRatio })
+			editor.updateInstanceState({ devicePixelRatio: win.devicePixelRatio })
 		}
 		updatePixelRatio()
 		return () => {
@@ -103,8 +104,8 @@ export function useDocumentEvents() {
 				preventDefault(e)
 			}
 
-			if ((e as any).isKilled) return
-			;(e as any).isKilled = true
+			if (editor.wasEventAlreadyHandled(e)) return
+			editor.markEventAsHandled(e)
 			const hasSelectedShapes = !!editor.getSelectedShapeIds().length
 
 			switch (e.key) {
@@ -211,8 +212,8 @@ export function useDocumentEvents() {
 		}
 
 		const handleKeyUp = (e: KeyboardEvent) => {
-			if ((e as any).isKilled) return
-			;(e as any).isKilled = true
+			if (editor.wasEventAlreadyHandled(e)) return
+			editor.markEventAsHandled(e)
 
 			if (areShortcutsDisabled(editor)) {
 				return
@@ -239,19 +240,20 @@ export function useDocumentEvents() {
 
 		function handleTouchStart(e: TouchEvent) {
 			if (container.contains(e.target as Node)) {
-				// Center point of the touch area
-				const touchXPosition = e.touches[0].pageX
+				// Center point of the touch area, measured from the edge of the window the touch
+				// has to reach to trigger the navigation
+				const touchXPosition = e.touches[0].clientX
 				// Size of the touch area
 				const touchXRadius = e.touches[0].radiusX || 0
 
-				// We set a threshold (10px) on both sizes of the screen,
-				// if the touch area overlaps with the screen edges
-				// it's likely to trigger the navigation. We prevent the
-				// touchstart event in that case.
-				// todo: make this relative to the actual window, not the editor's screen bounds
+				// If the touch area overlaps with the screen edges it's likely to trigger the
+				// navigation. We prevent the touchstart event in that case. The gesture belongs to
+				// the window, so an editor inset from the window's edges — beside a sidebar, say —
+				// is not near an edge the system reacts to.
+				const windowWidth = editor.getContainerWindow().innerWidth
 				if (
 					touchXPosition - touchXRadius < 10 ||
-					touchXPosition + touchXRadius > editor.getViewportScreenBounds().width - 10
+					touchXPosition + touchXRadius > windowWidth - 10
 				) {
 					if ((e.target as HTMLElement)?.tagName === 'BUTTON') {
 						// Force a click before bailing
@@ -275,9 +277,10 @@ export function useDocumentEvents() {
 
 		container.addEventListener('wheel', handleWheel, { passive: false })
 
-		document.addEventListener('gesturestart', preventDefault)
-		document.addEventListener('gesturechange', preventDefault)
-		document.addEventListener('gestureend', preventDefault)
+		const ownerDoc = container.ownerDocument
+		ownerDoc.addEventListener('gesturestart', preventDefault)
+		ownerDoc.addEventListener('gesturechange', preventDefault)
+		ownerDoc.addEventListener('gestureend', preventDefault)
 
 		container.addEventListener('keydown', handleKeyDown)
 		container.addEventListener('keyup', handleKeyUp)
@@ -287,9 +290,9 @@ export function useDocumentEvents() {
 
 			container.removeEventListener('wheel', handleWheel)
 
-			document.removeEventListener('gesturestart', preventDefault)
-			document.removeEventListener('gesturechange', preventDefault)
-			document.removeEventListener('gestureend', preventDefault)
+			ownerDoc.removeEventListener('gesturestart', preventDefault)
+			ownerDoc.removeEventListener('gesturechange', preventDefault)
+			ownerDoc.removeEventListener('gestureend', preventDefault)
 
 			container.removeEventListener('keydown', handleKeyDown)
 			container.removeEventListener('keyup', handleKeyUp)
@@ -298,5 +301,8 @@ export function useDocumentEvents() {
 }
 
 function areShortcutsDisabled(editor: Editor) {
-	return editor.menus.hasOpenMenus() || activeElementShouldCaptureKeys()
+	return (
+		editor.menus.hasOpenMenus() ||
+		activeElementShouldCaptureKeys(true, editor.getContainerDocument())
+	)
 }

@@ -1,4 +1,4 @@
-import { isAccelKey, preventDefault, TiptapEditor } from '@tldraw/editor'
+import { isAccelKey, preventDefault, TiptapEditor, useEditor } from '@tldraw/editor'
 import { useEffect, useMemo, useState } from 'react'
 import { useUiEvents } from '../../context/events'
 import { useTranslation } from '../../hooks/useTranslation/useTranslation'
@@ -20,6 +20,7 @@ export function DefaultRichTextToolbarContent({
 	textEditor,
 	onEditLinkStart,
 }: DefaultRichTextToolbarContentProps) {
+	const editor = useEditor()
 	const trackEvent = useUiEvents()
 	const msg = useTranslation()
 	const source = 'rich-text-menu'
@@ -45,15 +46,19 @@ export function DefaultRichTextToolbarContent({
 			}
 		}
 
-		document.addEventListener('keydown', handleKeyDown)
+		const doc = editor.getContainerDocument()
+		doc.addEventListener('keydown', handleKeyDown)
 		return () => {
-			document.removeEventListener('keydown', handleKeyDown)
+			doc.removeEventListener('keydown', handleKeyDown)
 		}
-	}, [onEditLinkStart])
+	}, [editor, onEditLinkStart])
 
 	// todo: we could make this a prop
 	const actions = useMemo(() => {
 		function handleOp(name: string, op: string) {
+			// Check if the editor view is available before calling operations
+			if (!textEditor.view) return
+
 			trackEvent('rich-text', { operation: name as any, source })
 			// @ts-expect-error typing this is annoying at the moment.
 			textEditor.chain().focus()[op]().run()
@@ -109,7 +114,7 @@ export function DefaultRichTextToolbarContent({
 	}, [textEditor, trackEvent, onEditLinkStart])
 
 	return actions.map(({ name, attrs, onSelect }) => {
-		const isActive = textEditor.isActive(name, attrs)
+		const isActive = textEditor.view ? textEditor.isActive(name, attrs) : false
 		return (
 			<TldrawUiToolbarButton
 				key={name}

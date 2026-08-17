@@ -1,15 +1,18 @@
-import { USER_COLORS, track, useContainer, useEditor } from '@tldraw/editor'
+import { USER_COLORS, getOwnerWindow, track, useContainer, useEditor } from '@tldraw/editor'
 import { Popover as _Popover } from 'radix-ui'
 import React, { useCallback, useRef, useState } from 'react'
 import { useUiEvents } from '../../context/events'
-import { useTranslation } from '../../hooks/useTranslation/useTranslation'
+import { useDirection, useTranslation } from '../../hooks/useTranslation/useTranslation'
 import { TldrawUiButton } from '../primitives/Button/TldrawUiButton'
 import { TldrawUiButtonIcon } from '../primitives/Button/TldrawUiButtonIcon'
+import { TldrawUiGrid } from '../primitives/layout'
 
+/** @public @react */
 export const UserPresenceColorPicker = track(function UserPresenceColorPicker() {
 	const editor = useEditor()
 	const container = useContainer()
 	const msg = useTranslation()
+	const dir = useDirection()
 	const trackEvent = useUiEvents()
 
 	const rPointing = useRef(false)
@@ -37,7 +40,7 @@ export const UserPresenceColorPicker = track(function UserPresenceColorPicker() 
 	} = React.useMemo(() => {
 		const handlePointerUp = () => {
 			rPointing.current = false
-			window.removeEventListener('pointerup', handlePointerUp)
+			getOwnerWindow(container).removeEventListener('pointerup', handlePointerUp)
 		}
 
 		const handleButtonClick = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -55,7 +58,7 @@ export const UserPresenceColorPicker = track(function UserPresenceColorPicker() 
 			onValueChange(id)
 
 			rPointing.current = true
-			window.addEventListener('pointerup', handlePointerUp) // see TLD-658
+			getOwnerWindow(container).addEventListener('pointerup', handlePointerUp) // see TLD-658
 		}
 
 		const handleButtonPointerEnter = (e: React.PointerEvent<HTMLButtonElement>) => {
@@ -78,11 +81,11 @@ export const UserPresenceColorPicker = track(function UserPresenceColorPicker() 
 			handleButtonPointerEnter,
 			handleButtonPointerUp,
 		}
-	}, [value, onValueChange])
+	}, [container, value, onValueChange])
 
 	return (
 		<_Popover.Root onOpenChange={handleOpenChange} open={isOpen}>
-			<_Popover.Trigger dir="ltr" asChild>
+			<_Popover.Trigger dir={dir} asChild>
 				<TldrawUiButton
 					type="icon"
 					className="tlui-people-menu__user__color"
@@ -94,13 +97,13 @@ export const UserPresenceColorPicker = track(function UserPresenceColorPicker() 
 			</_Popover.Trigger>
 			<_Popover.Portal container={container}>
 				<_Popover.Content
-					dir="ltr"
+					dir={dir}
 					className="tlui-menu tlui-people-menu__user__color-picker"
 					align="start"
 					side="left"
 					sideOffset={8}
 				>
-					<div className={'tlui-buttons__grid'}>
+					<TldrawUiGrid>
 						{USER_COLORS.map((item: string) => (
 							<TldrawUiButton
 								type="icon"
@@ -110,7 +113,6 @@ export const UserPresenceColorPicker = track(function UserPresenceColorPicker() 
 								aria-label={item}
 								isActive={value === item}
 								title={item}
-								className={'tlui-button-grid__button'}
 								style={{ color: item }}
 								onPointerEnter={handleButtonPointerEnter}
 								onPointerDown={handleButtonPointerDown}
@@ -120,7 +122,7 @@ export const UserPresenceColorPicker = track(function UserPresenceColorPicker() 
 								<TldrawUiButtonIcon icon="color" />
 							</TldrawUiButton>
 						))}
-					</div>
+					</TldrawUiGrid>
 				</_Popover.Content>
 			</_Popover.Portal>
 		</_Popover.Root>

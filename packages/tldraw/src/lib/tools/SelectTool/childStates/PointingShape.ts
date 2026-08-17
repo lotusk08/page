@@ -1,4 +1,5 @@
-import { StateNode, TLPointerEventInfo, TLShape } from '@tldraw/editor'
+import { StateNode, TLClickEventInfo, TLPointerEventInfo, TLShape } from '@tldraw/editor'
+import { isOverArrowLabel } from '../../../shapes/arrow/arrowLabel'
 import { getTextLabels } from '../../../utils/shapes/shapes'
 
 export class PointingShape extends StateNode {
@@ -15,9 +16,7 @@ export class PointingShape extends StateNode {
 		const selectedShapeIds = this.editor.getSelectedShapeIds()
 		const selectionBounds = this.editor.getSelectionRotatedPageBounds()
 		const focusedGroupId = this.editor.getFocusedGroupId()
-		const {
-			inputs: { currentPagePoint },
-		} = this.editor
+		const currentPagePoint = this.editor.inputs.getCurrentPagePoint()
 		const { shiftKey, altKey, accelKey } = info
 
 		this.hitShape = info.shape
@@ -64,19 +63,24 @@ export class PointingShape extends StateNode {
 	override onPointerUp(info: TLPointerEventInfo) {
 		const selectedShapeIds = this.editor.getSelectedShapeIds()
 		const focusedGroupId = this.editor.getFocusedGroupId()
-		const zoomLevel = this.editor.getZoomLevel()
-		const {
-			inputs: { currentPagePoint },
-		} = this.editor
+		const currentPagePoint = this.editor.inputs.getCurrentPagePoint()
 
 		const additiveSelectionKey = info.shiftKey || info.accelKey
 
 		const hitShape =
 			this.editor.getShapeAtPoint(currentPagePoint, {
-				margin: this.editor.options.hitTestMargin / zoomLevel,
+				margin: this.editor.getHitTestMargin(),
 				hitInside: true,
 				renderingOnly: true,
 			}) ?? this.hitShape
+
+		// The hit shape may have been deleted between pointer down and pointer up
+		// (e.g. by a remote user or an undo), in which case the fallback hitShape
+		// is stale. Bail to idle so we don't dereference a missing shape.
+		if (!this.editor.getShape(hitShape.id)) {
+			this.parent.transition('idle', info)
+			return
+		}
 
 		const selectingShape = hitShape
 			? this.editor.getOutermostSelectableShape(hitShape)
@@ -152,13 +156,7 @@ export class PointingShape extends StateNode {
 										this.editor.markHistoryStoppingPoint('editing on pointer up')
 										this.editor.select(selectingShape.id)
 
-										const util = this.editor.getShapeUtil(selectingShape)
-										if (this.editor.getIsReadonly()) {
-											if (!util.canEditInReadOnly(selectingShape)) {
-												return
-											}
-										}
-
+										if (!this.editor.canEditShape(selectingShape)) return
 										this.editor.setEditingShape(selectingShape.id)
 										this.editor.setCurrentTool('select.editing_shape')
 
@@ -204,12 +202,34 @@ export class PointingShape extends StateNode {
 		this.parent.transition('idle', info)
 	}
 
-	override onDoubleClick() {
+	override onDoubleClick(info: TLClickEventInfo) {
 		this.isDoubleClick = true
+
+		if (
+			this.editor.inputs.getShiftKey() ||
+			info.phase !== 'down' ||
+			info.ctrlKey ||
+			info.shiftKey
+		) {
+			return
+		}
+
+		const { shape: _shape, ...canvasInfo } = info as TLClickEventInfo & { target: 'shape' }
+		this.parent.transition('idle')
+		this.parent.getCurrent()?.handleEvent({
+			...canvasInfo,
+			target: 'canvas',
+		})
 	}
 
 	override onPointerMove(info: TLPointerEventInfo) {
-		if (this.editor.inputs.isDragging) {
+		if (this.editor.inputs.getIsDragging()) {
+			if (isOverArrowLabel(this.editor, this.hitShape)) {
+				// We're moving the label on a shape.
+				this.parent.transition('pointing_arrow_label', { ...info, shape: this.hitShape })
+				return
+			}
+
 			if (this.didCtrlOnEnter) {
 				this.parent.transition('brushing', info)
 			} else {
@@ -224,6 +244,13 @@ export class PointingShape extends StateNode {
 
 	private startTranslating(info: TLPointerEventInfo) {
 		if (this.editor.getIsReadonly()) return
+
+		// If we didn't select the shape on enter (e.g. because it has an onClick handler),
+		// and there's no current selection, select it now before transitioning to translating.
+		if (!this.didSelectOnEnter && !this.editor.getSelectedShapeIds().length) {
+			this.editor.markHistoryStoppingPoint('selecting shape')
+			this.editor.setSelectedShapes([this.hitShapeForPointerUp.id])
+		}
 
 		// Re-focus the editor, just in case the text label of the shape has stolen focus
 		this.editor.focus()

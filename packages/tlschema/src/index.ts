@@ -1,20 +1,49 @@
+/**
+ * @fileoverview
+ * Main entry point for the tldraw schema package. Exports the complete type system,
+ * data structures, validation, and migrations for tldraw's persisted data.
+ *
+ * This package provides:
+ * - Schema creation utilities (createTLSchema, defaultShapeSchemas, defaultBindingSchemas)
+ * - All built-in shape types (TLGeoShape, TLTextShape, TLArrowShape, etc.)
+ * - Asset management types and validators (TLImageAsset, TLVideoAsset, TLBookmarkAsset)
+ * - Binding system for shape relationships (TLArrowBinding)
+ * - Store integration types (TLStore, TLStoreProps, TLStoreSnapshot)
+ * - Style properties for consistent styling (DefaultColorStyle, DefaultSizeStyle, etc.)
+ * - Validation utilities and type guards
+ * - Migration systems for schema evolution
+ * - Geometry and utility types
+ *
+ * @example
+ * ```ts
+ * import { createTLSchema, defaultShapeSchemas, TLStore } from '@tldraw/tlschema'
+ *
+ * // Create a schema with default shapes
+ * const schema = createTLSchema({
+ *   shapes: defaultShapeSchemas
+ * })
+ *
+ * // Use with a store
+ * const store = new Store({ schema })
+ * ```
+ *
+ * @public
+ */
+
 import { registerTldrawLibraryVersion } from '@tldraw/utils'
-export {
-	type TLAssetContext,
-	type TLAssetStore,
-	type TLSerializedStore,
-	type TLStore,
-	type TLStoreProps,
-	type TLStoreSchema,
-	type TLStoreSnapshot,
-} from './TLStore'
 export { assetIdValidator, createAssetValidator, type TLBaseAsset } from './assets/TLBaseAsset'
-export { type TLBookmarkAsset } from './assets/TLBookmarkAsset'
-export { type TLImageAsset } from './assets/TLImageAsset'
-export { type TLVideoAsset } from './assets/TLVideoAsset'
+export {
+	bookmarkAssetMigrations,
+	bookmarkAssetProps,
+	type TLBookmarkAsset,
+} from './assets/TLBookmarkAsset'
+export { imageAssetMigrations, imageAssetProps, type TLImageAsset } from './assets/TLImageAsset'
+export { videoAssetMigrations, videoAssetProps, type TLVideoAsset } from './assets/TLVideoAsset'
 export {
 	arrowBindingMigrations,
 	arrowBindingProps,
+	arrowBindingVersions,
+	ElbowArrowSnap,
 	type TLArrowBinding,
 	type TLArrowBindingProps,
 } from './bindings/TLArrowBinding'
@@ -26,26 +55,18 @@ export {
 export {
 	createPresenceStateDerivation,
 	getDefaultUserPresence,
+	type CreatePresenceStateDerivationOpts,
 	type TLPresenceStateInfo,
-	type TLPresenceUserInfo,
 } from './createPresenceStateDerivation'
 export {
 	createTLSchema,
+	defaultAssetSchemas,
 	defaultBindingSchemas,
 	defaultShapeSchemas,
 	type SchemaPropsInfo,
 	type TLSchema,
+	type UserSchemaInfo,
 } from './createTLSchema'
-export {
-	TL_CANVAS_UI_COLOR_TYPES,
-	canvasUiColorTypeValidator,
-	type TLCanvasUiColor,
-} from './misc/TLColor'
-export { TL_CURSOR_TYPES, type TLCursor, type TLCursorType } from './misc/TLCursor'
-export { TL_HANDLE_TYPES, type TLHandle, type TLHandleType } from './misc/TLHandle'
-export { opacityValidator, type TLOpacityType } from './misc/TLOpacity'
-export { richTextValidator, toRichText, type TLRichText } from './misc/TLRichText'
-export { TL_SCRIBBLE_STATES, scribbleValidator, type TLScribble } from './misc/TLScribble'
 export {
 	boxModelValidator,
 	vecModelValidator,
@@ -54,13 +75,29 @@ export {
 } from './misc/geometry-types'
 export { idValidator } from './misc/id-validator'
 export {
-	AssetRecordType,
+	canvasUiColorTypeValidator,
+	TL_CANVAS_UI_COLOR_TYPES,
+	type TLCanvasUiColor,
+} from './misc/TLColor'
+export { TL_CURSOR_TYPES, type TLCursor, type TLCursorType } from './misc/TLCursor'
+export { TL_HANDLE_TYPES, type TLHandle, type TLHandleType } from './misc/TLHandle'
+export { opacityValidator, type TLOpacityType } from './misc/TLOpacity'
+export { richTextValidator, toRichText, type TLRichText } from './misc/TLRichText'
+export { scribbleValidator, TL_SCRIBBLE_STATES, type TLScribble } from './misc/TLScribble'
+export {
 	assetMigrations,
-	assetValidator,
+	AssetRecordType,
+	createAssetPropsMigrationIds,
+	createAssetPropsMigrationSequence,
+	createAssetRecordType,
 	type TLAsset,
 	type TLAssetId,
 	type TLAssetPartial,
 	type TLAssetShape,
+	type TLDefaultAsset,
+	type TLGlobalAssetPropsMap,
+	type TLIndexedAssets,
+	type TLUnknownAsset,
 } from './records/TLAsset'
 export {
 	createBindingId,
@@ -74,25 +111,58 @@ export {
 	type TLBindingId,
 	type TLBindingUpdate,
 	type TLDefaultBinding,
+	type TLGlobalBindingPropsMap,
+	type TLIndexedBindings,
 	type TLUnknownBinding,
 } from './records/TLBinding'
 export { CameraRecordType, type TLCamera, type TLCameraId } from './records/TLCamera'
 export {
+	commentReactionRecordConfig,
+	commentRecordConfig,
+	commentSchemaRecords,
+	commentThreadRecordConfig,
+	createComment,
+	createCommentId,
+	createCommentReaction,
+	createCommentReactionId,
+	createCommentThread,
+	createCommentThreadId,
+	isCommentId,
+	isCommentReactionId,
+	isCommentThreadId,
+	type TLComment,
+	type TLCommentAnchor,
+	type TLCommentId,
+	type TLCommentReaction,
+	type TLCommentReactionId,
+	type TLCommentThread,
+	type TLCommentThreadId,
+} from './records/TLComment'
+export {
+	createCustomRecordId,
+	createCustomRecordMigrationIds,
+	createCustomRecordMigrationSequence,
+	isCustomRecord,
+	isCustomRecordId,
+	type CustomRecordInfo,
+} from './records/TLCustomRecord'
+export {
 	DocumentRecordType,
-	TLDOCUMENT_ID,
 	isDocument,
+	TLDOCUMENT_ID,
 	type TLDocument,
 } from './records/TLDocument'
 export {
-	TLINSTANCE_ID,
 	pluckPreservingValues,
+	TLINSTANCE_ID,
 	type TLInstance,
 	type TLInstanceId,
 } from './records/TLInstance'
 export {
-	PageRecordType,
+	isPage,
 	isPageId,
 	pageIdValidator,
+	PageRecordType,
 	type TLPage,
 	type TLPageId,
 } from './records/TLPage'
@@ -112,7 +182,13 @@ export {
 	type TLInstancePresence,
 	type TLInstancePresenceID,
 } from './records/TLPresence'
-export { type TLRecord } from './records/TLRecord'
+export {
+	type TLCustomRecord,
+	type TLDefaultRecord,
+	type TLGlobalRecordPropsMap,
+	type TLIndexedRecords,
+	type TLRecord,
+} from './records/TLRecord'
 export {
 	createShapeId,
 	createShapePropsMigrationIds,
@@ -121,13 +197,26 @@ export {
 	isShape,
 	isShapeId,
 	rootShapeMigrations,
+	type ExtractShapeByProps,
+	type TLCreateShapePartial,
 	type TLDefaultShape,
+	type TLGlobalShapePropsMap,
+	type TLIndexedShapes,
 	type TLParentId,
 	type TLShape,
 	type TLShapeId,
 	type TLShapePartial,
 	type TLUnknownShape,
 } from './records/TLShape'
+export {
+	createUserId,
+	createUserRecordType,
+	isUserId,
+	userIdValidator,
+	UserRecordType,
+	type TLUser,
+	type TLUserId,
+} from './records/TLUser'
 export {
 	type RecordProps,
 	type RecordPropsType,
@@ -138,10 +227,13 @@ export { type ShapeWithCrop, type TLShapeCrop } from './shapes/ShapeWithCrop'
 export {
 	ArrowShapeArrowheadEndStyle,
 	ArrowShapeArrowheadStartStyle,
+	ArrowShapeKindStyle,
 	arrowShapeMigrations,
 	arrowShapeProps,
+	arrowShapeVersions,
 	type TLArrowShape,
 	type TLArrowShapeArrowheadStyle,
+	type TLArrowShapeKind,
 	type TLArrowShapeProps,
 } from './shapes/TLArrowShape'
 export {
@@ -157,6 +249,7 @@ export {
 	type TLBookmarkShapeProps,
 } from './shapes/TLBookmarkShape'
 export {
+	compressLegacySegments,
 	drawShapeMigrations,
 	drawShapeProps,
 	type TLDrawShape,
@@ -203,9 +296,9 @@ export {
 	type TLImageShapeProps,
 } from './shapes/TLImageShape'
 export {
-	LineShapeSplineStyle,
 	lineShapeMigrations,
 	lineShapeProps,
+	LineShapeSplineStyle,
 	type TLLineShape,
 	type TLLineShapePoint,
 	type TLLineShapeProps,
@@ -232,18 +325,17 @@ export {
 export { EnumStyleProp, StyleProp, type StylePropValue } from './styles/StyleProp'
 export {
 	DefaultColorStyle,
-	DefaultColorThemePalette,
-	defaultColorNames,
-	getDefaultColorTheme,
+	registerColorsFromThemes,
 	type TLDefaultColorStyle,
-	type TLDefaultColorTheme,
-	type TLDefaultColorThemeColor,
 } from './styles/TLColorStyle'
 export { DefaultDashStyle, type TLDefaultDashStyle } from './styles/TLDashStyle'
 export { DefaultFillStyle, type TLDefaultFillStyle } from './styles/TLFillStyle'
+export { type TLFontFace, type TLFontFaceSource } from './styles/TLFontFace'
 export {
 	DefaultFontFamilies,
 	DefaultFontStyle,
+	isFontEntry,
+	registerFontsFromThemes,
 	type TLDefaultFontStyle,
 } from './styles/TLFontStyle'
 export {
@@ -253,12 +345,35 @@ export {
 export { DefaultSizeStyle, type TLDefaultSizeStyle } from './styles/TLSizeStyle'
 export { DefaultTextAlignStyle, type TLDefaultTextAlignStyle } from './styles/TLTextAlignStyle'
 export {
+	type TLDefaultColor,
+	type TLRemovedDefaultThemeColors,
+	type TLTheme,
+	type TLThemeColors,
+	type TLThemeDefaultColors,
+	type TLThemeFont,
+	type TLThemeFonts,
+	type TLThemeId,
+	type TLThemes,
+	type TLThemeUiColorKeys,
+} from './styles/TLTheme'
+export {
 	DefaultVerticalAlignStyle,
 	type TLDefaultVerticalAlignStyle,
 } from './styles/TLVerticalAlignStyle'
 export {
-	LANGUAGES,
+	createCachedUserResolve,
+	type TLAssetContext,
+	type TLAssetStore,
+	type TLSerializedStore,
+	type TLStore,
+	type TLStoreProps,
+	type TLStoreSchema,
+	type TLStoreSnapshot,
+	type TLUserStore,
+} from './TLStore'
+export {
 	getDefaultTranslationLocale,
+	LANGUAGES,
 	type TLLanguage,
 } from './translations/translations'
 export { type SetValue } from './util-types'
@@ -268,3 +383,5 @@ registerTldrawLibraryVersion(
 	(globalThis as any).TLDRAW_LIBRARY_VERSION,
 	(globalThis as any).TLDRAW_LIBRARY_MODULES
 )
+
+export { DIM_2D, DIM_3D, b64Vecs } from './misc/b64Vecs'

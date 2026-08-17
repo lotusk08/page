@@ -1,9 +1,21 @@
 import { APP_ASSET_UPLOAD_ENDPOINT } from '@tldraw/dotcom-shared'
 import { T } from '@tldraw/validate'
-import { createRouter, handleApiRequest, notFound, parseRequestQuery } from '@tldraw/worker-shared'
+import {
+	createRouter,
+	handleApiRequest,
+	isAllowedOrigin,
+	notFound,
+	parseRequestQuery,
+} from '@tldraw/worker-shared'
 import { WorkerEntrypoint } from 'cloudflare:workers'
 
 declare const fetch: typeof import('@cloudflare/workers-types').fetch
+declare const caches: {
+	default: {
+		match(request: unknown): Promise<Response | undefined>
+		put(request: unknown, response: Response): Promise<void>
+	}
+}
 
 interface Environment {
 	IS_LOCAL?: string
@@ -83,7 +95,15 @@ export default class Worker extends WorkerEntrypoint<Environment> {
 				const req = new Request(passthroughUrl.href, { cf: { image: imageOptions } })
 				actualResponse = await this.env.SYNC_WORKER.fetch(req)
 			} else {
-				actualResponse = await fetch(passthroughUrl, { cf: { image: imageOptions } })
+				const fetchedResponse = await fetch(passthroughUrl, {
+					cf: { image: imageOptions },
+				})
+				// Normalize Cloudflare's response type to the DOM Response type used in this worker.
+				actualResponse = new Response(fetchedResponse.body as unknown as BodyInit, {
+					status: fetchedResponse.status,
+					statusText: fetchedResponse.statusText,
+					headers: fetchedResponse.headers as unknown as HeadersInit,
+				})
 			}
 			if (!actualResponse.headers.get('content-type')?.startsWith('image/')) return notFound()
 			if (actualResponse.status === 200) {
@@ -109,12 +129,7 @@ export default class Worker extends WorkerEntrypoint<Environment> {
 			return true
 		}
 
-		return (
-			origin.endsWith('.tldraw.com') ||
-			origin.endsWith('.tldraw.xyz') ||
-			origin.endsWith('.tldraw.dev') ||
-			origin.endsWith('.tldraw.workers.dev')
-		)
+		return isAllowedOrigin(origin)
 	}
 }
 

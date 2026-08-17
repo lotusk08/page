@@ -1,11 +1,11 @@
-import { cn } from '@/utils/cn'
 import { Tab, TabGroup, TabList, TabPanel, TabPanels } from '@headlessui/react'
-
 import { createJavaScriptRegexEngine } from '@shikijs/engine-javascript'
 import { createHighlighterCoreSync, hastToHtml } from 'shiki/core'
 import css from 'shiki/dist/langs/css.mjs'
 import ts from 'shiki/dist/langs/typescript.mjs'
 import theme from 'shiki/dist/themes/github-dark.mjs'
+import { cn } from '@/utils/cn'
+import { CopyButton } from './copy-button'
 
 // The normal shiki import is async, which we can't use here easily because of SSR complications.
 // So here we create a synchronous version of the highlighter.
@@ -66,6 +66,7 @@ export function CodeFiles({
 									__html: hastToHtml(codeElem),
 								}}
 							></pre>
+							<CopyButton copy={content} />
 						</TabPanel>
 					)
 				})}

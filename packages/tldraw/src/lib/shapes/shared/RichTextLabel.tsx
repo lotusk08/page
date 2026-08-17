@@ -1,35 +1,32 @@
 import {
 	Box,
-	DefaultFontFamilies,
-	TLDefaultFillStyle,
-	TLDefaultFontStyle,
-	TLDefaultHorizontalAlignStyle,
-	TLDefaultVerticalAlignStyle,
+	ExtractShapeByProps,
 	TLEventInfo,
 	TLRichText,
 	TLShapeId,
+	openWindow,
 	preventDefault,
+	resolveLineHeightPx,
 	useEditor,
 	useReactor,
 	useValue,
 } from '@tldraw/editor'
+import classNames from 'classnames'
 import React, { useMemo } from 'react'
 import { renderHtmlFromRichText } from '../../utils/text/richText'
 import { RichTextArea } from '../text/RichTextArea'
-import { TEXT_PROPS } from './default-shape-constants'
 import { isLegacyAlign } from './legacyProps'
 import { useEditableRichText } from './useEditableRichText'
 
 /** @public */
 export interface RichTextLabelProps {
 	shapeId: TLShapeId
-	type: string
-	font: TLDefaultFontStyle
+	type: ExtractShapeByProps<{ richText: TLRichText }>['type']
+	fontFamily: string
 	fontSize: number
 	lineHeight: number
-	fill?: TLDefaultFillStyle
-	align: TLDefaultHorizontalAlignStyle
-	verticalAlign: TLDefaultVerticalAlignStyle
+	textAlign: 'start' | 'center' | 'end'
+	verticalAlign: 'start' | 'middle' | 'end'
 	wrap?: boolean
 	richText?: TLRichText
 	labelColor: string
@@ -42,6 +39,7 @@ export interface RichTextLabelProps {
 	textHeight?: number
 	padding?: number
 	hasCustomTabBehavior?: boolean
+	showTextOutline?: boolean
 }
 
 /**
@@ -56,10 +54,10 @@ export const RichTextLabel = React.memo(function RichTextLabel({
 	type,
 	richText,
 	labelColor,
-	font,
+	fontFamily,
 	fontSize,
 	lineHeight,
-	align,
+	textAlign,
 	verticalAlign,
 	wrap,
 	isSelected,
@@ -70,9 +68,11 @@ export const RichTextLabel = React.memo(function RichTextLabel({
 	textWidth,
 	textHeight,
 	hasCustomTabBehavior,
+	showTextOutline = true,
 }: RichTextLabelProps) {
 	const editor = useEditor()
 	const isDragging = React.useRef(false)
+	const legacyAlign = isLegacyAlign(textAlign)
 	const { rInput, isEmpty, isEditing, isReadyForEditing, ...editableTextRest } =
 		useEditableRichText(shapeId, type, richText)
 
@@ -80,6 +80,7 @@ export const RichTextLabel = React.memo(function RichTextLabel({
 		if (richText) {
 			return renderHtmlFromRichText(editor, richText)
 		}
+		return undefined
 	}, [editor, richText])
 
 	const selectToolActive = useValue(
@@ -92,15 +93,17 @@ export const RichTextLabel = React.memo(function RichTextLabel({
 		'isDragging',
 		() => {
 			editor.getInstanceState()
-			isDragging.current = editor.inputs.isDragging
+			isDragging.current = editor.inputs.getIsDragging()
 		},
 		[editor]
 	)
 
-	const legacyAlign = isLegacyAlign(align)
-
 	const handlePointerDown = (e: React.MouseEvent<HTMLDivElement>) => {
-		if (e.target instanceof HTMLElement && (e.target.tagName === 'A' || e.target.closest('a'))) {
+		const HTMLElementCtor = editor.getContainerWindow().HTMLElement
+		if (
+			e.target instanceof HTMLElementCtor &&
+			(e.target.tagName === 'A' || e.target.closest('a'))
+		) {
 			// This mousedown prevent default is to let dragging when over a link work.
 			preventDefault(e)
 
@@ -109,10 +112,10 @@ export const RichTextLabel = React.memo(function RichTextLabel({
 			// We don't get the mouseup event later because we preventDefault
 			// so we have to do it manually.
 			const handlePointerUp = (e: TLEventInfo) => {
-				if (e.name !== 'pointer_up') return
+				if (e.name !== 'pointer_up' || !link) return
 
 				if (!isDragging.current) {
-					window.open(link, '_blank', 'noopener, noreferrer')
+					openWindow(link, '_blank', false)
 				}
 				editor.off('event', handlePointerUp)
 			}
@@ -127,31 +130,49 @@ export const RichTextLabel = React.memo(function RichTextLabel({
 	const cssPrefix = classNamePrefix || 'tl-text'
 	return (
 		<div
-			className={`${cssPrefix}-label tl-text-wrapper tl-rich-text-wrapper`}
-			data-font={font}
-			data-align={align}
+			className={classNames(
+				`${cssPrefix}-label tl-text-wrapper tl-rich-text-wrapper`,
+				showTextOutline ? 'tl-text__outline' : 'tl-text__no-outline'
+			)}
+			aria-hidden={!isEditing}
 			data-hastext={!isEmpty}
 			data-isediting={isEditing}
 			data-textwrap={!!wrap}
 			data-isselected={isSelected}
 			style={{
-				justifyContent: align === 'middle' || legacyAlign ? 'center' : align,
-				alignItems: verticalAlign === 'middle' ? 'center' : verticalAlign,
+				fontFamily,
+				textAlign,
+				justifyContent:
+					textAlign === 'center' || legacyAlign
+						? 'center'
+						: textAlign === 'end'
+							? 'flex-end'
+							: 'flex-start',
+				alignItems:
+					verticalAlign === 'middle'
+						? 'center'
+						: verticalAlign === 'end'
+							? 'flex-end'
+							: 'flex-start',
 				padding,
 				...style,
 			}}
 		>
 			<div
 				className={`${cssPrefix}-label__inner tl-text-content__wrapper`}
-				style={{
-					fontSize,
-					lineHeight: Math.floor(fontSize * lineHeight) + 'px',
-					minHeight: Math.floor(fontSize * lineHeight) + 'px',
-					minWidth: Math.ceil(textWidth || 0),
-					color: labelColor,
-					width: textWidth ? Math.ceil(textWidth) : undefined,
-					height: textHeight ? Math.ceil(textHeight) : undefined,
-				}}
+				style={
+					{
+						fontSize,
+						lineHeight: `${resolveLineHeightPx(fontSize, lineHeight)}px`,
+						minHeight: `${resolveLineHeightPx(fontSize, lineHeight)}px`,
+						// Unitless multiplier consumed by the .tl-rich-text h1–h6 rule (see editor.css).
+						'--tl-rich-text-heading-line-height': lineHeight,
+						minWidth: Math.ceil(textWidth || 0),
+						color: labelColor,
+						width: textWidth ? Math.ceil(textWidth) : undefined,
+						height: textHeight ? Math.ceil(textHeight) : undefined,
+					} as React.CSSProperties
+				}
 			>
 				<div className={`${cssPrefix} tl-text tl-text-content`} dir="auto">
 					{richText && (
@@ -187,12 +208,14 @@ export interface RichTextSVGProps {
 	bounds: Box
 	richText: TLRichText
 	fontSize: number
-	font: TLDefaultFontStyle
-	align: TLDefaultHorizontalAlignStyle
-	verticalAlign: TLDefaultVerticalAlignStyle
+	fontFamily: string
+	lineHeight: number
+	textAlign: 'start' | 'center' | 'end'
+	verticalAlign: 'start' | 'middle' | 'end'
 	wrap?: boolean
 	labelColor: string
 	padding: number
+	showTextOutline?: boolean
 }
 
 /**
@@ -204,32 +227,29 @@ export function RichTextSVG({
 	bounds,
 	richText,
 	fontSize,
-	font,
-	align,
+	fontFamily,
+	lineHeight,
+	textAlign,
 	verticalAlign,
 	wrap,
 	labelColor,
 	padding,
+	showTextOutline = true,
 }: RichTextSVGProps) {
 	const editor = useEditor()
 	const html = renderHtmlFromRichText(editor, richText)
-	const textAlign =
-		align === 'middle'
-			? ('center' as const)
-			: align === 'start'
-				? ('start' as const)
-				: ('end' as const)
+	const legacyAlign = isLegacyAlign(textAlign)
 	const justifyContent =
-		align === 'middle'
+		textAlign === 'center' || legacyAlign
 			? ('center' as const)
-			: align === 'start'
+			: textAlign === 'start'
 				? ('flex-start' as const)
 				: ('flex-end' as const)
 	const alignItems =
 		verticalAlign === 'middle' ? 'center' : verticalAlign === 'start' ? 'flex-start' : 'flex-end'
 	const wrapperStyle = {
 		display: 'flex',
-		fontFamily: DefaultFontFamilies[font],
+		fontFamily,
 		height: `100%`,
 		justifyContent,
 		alignItems,
@@ -239,12 +259,16 @@ export function RichTextSVG({
 		fontSize: `${fontSize}px`,
 		wrap: wrap ? 'wrap' : 'nowrap',
 		color: labelColor,
-		lineHeight: TEXT_PROPS.lineHeight,
+		lineHeight: `${resolveLineHeightPx(fontSize, lineHeight)}px`,
+		// Unitless multiplier consumed by the .tl-rich-text h1–h6 rule (see editor.css).
+		'--tl-rich-text-heading-line-height': lineHeight,
 		textAlign,
 		width: '100%',
 		wordWrap: 'break-word' as const,
 		overflowWrap: 'break-word' as const,
 		whiteSpace: 'pre-wrap',
+		textShadow: showTextOutline ? 'var(--tl-text-outline)' : 'none',
+		tabSize: 'var(--tl-tab-size, 2)',
 	}
 
 	return (
@@ -253,7 +277,10 @@ export function RichTextSVG({
 			y={bounds.minY}
 			width={bounds.w}
 			height={bounds.h}
-			className="tl-export-embed-styles tl-rich-text tl-rich-text-svg"
+			className={classNames(
+				'tl-export-embed-styles tl-rich-text tl-rich-text-svg',
+				showTextOutline ? 'tl-text__outline' : 'tl-text__no-outline'
+			)}
 		>
 			<div style={wrapperStyle}>
 				<div dangerouslySetInnerHTML={{ __html: html }} style={style} />

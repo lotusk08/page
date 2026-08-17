@@ -1,8 +1,10 @@
 import { execSync } from 'child_process'
-import { fetch } from 'cross-fetch'
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'fs'
 import path, { join } from 'path'
-import { compare, parse } from 'semver'
+import { Octokit } from '@octokit/rest'
+import { fetch } from 'cross-fetch'
+import { glob } from 'glob'
+import { parse } from 'semver'
 import { exec } from './exec'
 import { REPO_ROOT } from './file'
 import { nicelog } from './nicelog'
@@ -46,7 +48,7 @@ export async function getAllPackageDetails(): Promise<Record<string, PackageDeta
 	return Object.fromEntries(results.map((result) => [result.name, result]))
 }
 
-export async function setAllVersions(version: string) {
+export async function setAllVersions(version: string, options?: { stageChanges?: boolean }) {
 	const packages = await getAllPackageDetails()
 	for (const packageDetails of Object.values(packages)) {
 		const manifest = JSON.parse(readFileSync(path.join(packageDetails.dir, 'package.json'), 'utf8'))
@@ -64,21 +66,50 @@ export async function setAllVersions(version: string) {
 	writeFileSync('lerna.json', JSON.stringify(lernaJson, null, '\t') + '\n')
 
 	execSync('yarn')
+
+	if (options?.stageChanges) {
+		await stageAllPackageJsonChanges()
+	}
 }
 
-export async function getLatestVersion() {
-	const packages = await getAllPackageDetails()
-
-	const allVersions = Object.values(packages).map((p) => parse(p.version)!)
-	allVersions.sort(compare)
-
-	const latestVersion = allVersions[allVersions.length - 1]
-
-	if (!latestVersion) {
-		throw new Error('Could not find latest version')
+async function stageAllPackageJsonChanges() {
+	// stage the changes
+	const packageJsonFilesToAdd = []
+	for (const workspace of await getAllWorkspacePackages()) {
+		if (workspace.relativePath.startsWith('packages/')) {
+			packageJsonFilesToAdd.push(`${workspace.relativePath}/package.json`)
+		}
 	}
+	const versionFilesToAdd = glob.sync('**/*/version.ts', {
+		ignore: ['node_modules/**'],
+		follow: false,
+	})
+	console.log('versionFilesToAdd', versionFilesToAdd)
+	await exec('git', [
+		'add',
+		'--update',
+		'lerna.json',
+		...packageJsonFilesToAdd,
+		...versionFilesToAdd,
+	])
+}
 
-	return latestVersion
+function assertExists<T>(v: T | null | undefined): T {
+	if (v === null || v === undefined) throw new Error('Expected value to exist')
+	return v
+}
+
+export async function getLatestTldrawVersionFromNpm({
+	versionPrefix,
+}: { versionPrefix?: string } = {}) {
+	if (!versionPrefix)
+		return assertExists(parse((await exec('npm', ['show', 'tldraw', 'version'])).trim()))
+
+	const versions = (await exec('npm', ['show', 'tldraw@~' + versionPrefix, 'version'])).trim()
+	if (versions.startsWith('tldraw')) {
+		return assertExists(parse(versions.split('\n').pop()?.split(' ')[1].replaceAll("'", '')))
+	}
+	return assertExists(parse(versions))
 }
 
 function topologicalSortPackages(packages: Record<string, PackageDetails>) {
@@ -104,14 +135,17 @@ function topologicalSortPackages(packages: Record<string, PackageDetails>) {
 }
 
 export async function publish(distTag?: string) {
-	const npmToken = process.env.NPM_TOKEN
-	if (!npmToken) {
-		throw new Error('NPM_TOKEN not set')
-	}
-
-	execSync(`yarn config set npmAuthToken ${npmToken}`, { stdio: 'inherit' })
-	execSync(`yarn config set npmRegistryServer https://registry.npmjs.org`, { stdio: 'inherit' })
-
+	// Authentication uses npm's trusted publisher OIDC flow. The publish job in
+	// CI must grant `permissions: id-token: write` so yarn (>= 4.10, which we are
+	// on via `packageManager`) can exchange the GitHub-issued OIDC token for a
+	// short-lived publish token automatically.
+	//
+	// We invoke `yarn npm publish` rather than `npm publish` directly so that
+	// yarn rewrites `workspace:*` dependency specifiers in the published
+	// tarball into the concrete sibling versions. `npm publish` has no concept
+	// of yarn's workspace protocol and would ship `"workspace:*"` literally,
+	// breaking installs for any consumer outside this monorepo.
+	// See https://docs.npmjs.com/trusted-publishers
 	const packages = await getAllPackageDetails()
 
 	const publishOrder = topologicalSortPackages(packages)
@@ -125,10 +159,23 @@ export async function publish(distTag?: string) {
 		await retry(
 			async () => {
 				let output = ''
+				const publishStart = Date.now()
+				nicelog(
+					`[publish] ${packageDetails.name}@${packageDetails.version} starting npm publish...`
+				)
 				try {
 					await exec(
 						`yarn`,
-						['npm', 'publish', '--tag', String(tag), '--tolerate-republish', '--access', 'public'],
+						[
+							'npm',
+							'publish',
+							'--tag',
+							String(tag),
+							'--tolerate-republish',
+							'--provenance',
+							'--access',
+							'public',
+						],
 						{
 							pwd: packageDetails.dir,
 							processStdoutLine: (line) => {
@@ -142,12 +189,21 @@ export async function publish(distTag?: string) {
 						}
 					)
 				} catch (e) {
-					if (output.includes('You cannot publish over the previously published versions')) {
-						// --tolerate-republish seems to not work for canary versions??? so let's just ignore this error
+					if (
+						output.includes('cannot publish over the previously published versions') ||
+						output.includes('You cannot publish over the previously published versions')
+					) {
+						nicelog(
+							`[publish] ${packageDetails.name}@${packageDetails.version} already published, skipping`
+						)
 						return
 					}
 					throw e
 				}
+				const elapsed = ((Date.now() - publishStart) / 1000).toFixed(1)
+				nicelog(
+					`[publish] ${packageDetails.name}@${packageDetails.version} npm publish done (${elapsed}s)`
+				)
 			},
 			{
 				delay: 10_000,
@@ -208,4 +264,14 @@ export async function publishProductionDocsAndExamplesAndBemo({
 }: { gitRef?: string } = {}) {
 	await exec('git', ['push', 'origin', `${gitRef}:docs-production`, `--force`])
 	await exec('git', ['push', 'origin', `${gitRef}:bemo-production`, `--force`])
+}
+
+export async function triggerBumpVersionsWorkflow(ghToken: string) {
+	const octokit = new Octokit({ auth: ghToken })
+	await octokit.rest.actions.createWorkflowDispatch({
+		owner: 'tldraw',
+		repo: 'tldraw',
+		workflow_id: 'bump-versions.yml',
+		ref: 'main',
+	})
 }

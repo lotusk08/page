@@ -4,6 +4,7 @@ import { PORTRAIT_BREAKPOINT } from '../constants'
 import { useBreakpoint } from '../context/breakpoints'
 import { useTldrawUiComponents } from '../context/components'
 import { useTranslation } from '../hooks/useTranslation/useTranslation'
+import { TldrawUiRow } from './primitives/layout'
 import { TldrawUiToolbar } from './primitives/TldrawUiToolbar'
 
 /** @public @react */
@@ -32,16 +33,16 @@ export const DefaultMenuPanel = memo(function MenuPanel() {
 
 	return (
 		<nav ref={ref} className="tlui-menu-zone">
-			<div className="tlui-buttons__horizontal">
+			<TldrawUiRow>
 				{MainMenu && <MainMenu />}
 				{PageMenu && !isSinglePageMode && <PageMenu />}
 				{showQuickActions ? (
-					<TldrawUiToolbar className="tlui-buttons__horizontal" label={msg('actions-menu.title')}>
+					<TldrawUiToolbar orientation="horizontal" label={msg('actions-menu.title')}>
 						{QuickActions && <QuickActions />}
 						{ActionsMenu && <ActionsMenu />}
 					</TldrawUiToolbar>
 				) : null}
-			</div>
+			</TldrawUiRow>
 		</nav>
 	)
 })

@@ -1,6 +1,7 @@
 import classNames from 'classnames'
 import { Dialog as _Dialog } from 'radix-ui'
 import { CSSProperties, ReactNode } from 'react'
+import { useDirection, useTranslation } from '../../hooks/useTranslation/useTranslation'
 import { TldrawUiButton } from './Button/TldrawUiButton'
 import { TldrawUiButtonIcon } from './Button/TldrawUiButtonIcon'
 
@@ -24,9 +25,10 @@ export interface TLUiDialogTitleProps {
 
 /** @public @react */
 export function TldrawUiDialogTitle({ className, children, style }: TLUiDialogTitleProps) {
+	const dir = useDirection()
 	return (
 		<_Dialog.Title
-			dir="ltr"
+			dir={dir}
 			className={classNames('tlui-dialog__header__title', className)}
 			style={style}
 		>
@@ -37,12 +39,15 @@ export function TldrawUiDialogTitle({ className, children, style }: TLUiDialogTi
 
 /** @public @react */
 export function TldrawUiDialogCloseButton() {
+	const msg = useTranslation()
+	const dir = useDirection()
+
 	return (
 		<div className="tlui-dialog__header__close">
-			<_Dialog.DialogClose data-testid="dialog.close" dir="ltr" asChild>
+			<_Dialog.DialogClose data-testid="dialog.close" dir={dir} asChild>
 				<TldrawUiButton
 					type="icon"
-					aria-label="Close"
+					aria-label={msg('ui.close')}
 					onTouchEnd={(e) => (e.target as HTMLButtonElement).click()}
 				>
 					<TldrawUiButtonIcon small icon="cross-2" />
@@ -62,7 +67,7 @@ export interface TLUiDialogBodyProps {
 /** @public @react */
 export function TldrawUiDialogBody({ className, children, style }: TLUiDialogBodyProps) {
 	return (
-		<div className={classNames('tlui-dialog__body', className)} style={style}>
+		<div className={classNames('tlui-dialog__body', className)} style={style} tabIndex={0}>
 			{children}
 		</div>
 	)
@@ -71,7 +76,7 @@ export function TldrawUiDialogBody({ className, children, style }: TLUiDialogBod
 /** @public */
 export interface TLUiDialogFooterProps {
 	className?: string
-	children: ReactNode
+	children?: ReactNode
 }
 
 /** @public @react */

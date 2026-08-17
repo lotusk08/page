@@ -1,8 +1,8 @@
 import {
 	Editor,
+	getGlobalDocument,
 	sanitizeId,
 	TLExportType,
-	TLFrameShape,
 	TLImageExportOptions,
 	TLShapeId,
 } from '@tldraw/editor'
@@ -28,45 +28,15 @@ export async function exportAs(
 	editor: Editor,
 	ids: TLShapeId[],
 	opts: ExportAsOptions
-): Promise<void>
-/**
- * @deprecated The format & name parameters are now part of the opts object.
- * @public
- */
-export async function exportAs(
-	editor: Editor,
-	ids: TLShapeId[],
-	format?: TLExportType,
-	name?: string,
-	opts?: TLImageExportOptions
-): Promise<void>
-export async function exportAs(
-	...args:
-		| [
-				editor: Editor,
-				ids: TLShapeId[],
-				opts: TLImageExportOptions & { format: TLExportType; name?: string },
-		  ]
-		| [
-				editor: Editor,
-				ids: TLShapeId[],
-				format?: TLExportType,
-				name?: string,
-				opts?: TLImageExportOptions,
-		  ]
-) {
-	const [editor, ids, opts] =
-		typeof args[2] === 'object'
-			? args
-			: [args[0], args[1], { ...args[4], format: args[2] ?? 'png', name: args[3] }]
-
+): Promise<void> {
 	// If we don't get name then use a predefined one
 	let name = opts.name
 	if (!name) {
 		name = `shapes at ${getTimestamp()}`
 		if (ids.length === 1) {
 			const first = editor.getShape(ids[0])!
-			if (editor.isShapeOfType<TLFrameShape>(first, 'frame')) {
+			// Uses isShapeOfType (not isFrameLike) because it accesses frame-specific props (name)
+			if (editor.isShapeOfType(first, 'frame')) {
 				name = first.props.name || 'frame'
 			} else {
 				name = `${sanitizeId(first.id)} at ${getTimestamp()}`
@@ -77,7 +47,7 @@ export async function exportAs(
 
 	const { blob } = await editor.toImage(ids, opts)
 	const file = new File([blob], name, { type: blob.type })
-	downloadFile(file)
+	downloadFile(file, editor.getContainerDocument())
 }
 
 function getTimestamp() {
@@ -94,8 +64,8 @@ function getTimestamp() {
 }
 
 /** @internal */
-export function downloadFile(file: File) {
-	const link = document.createElement('a')
+export function downloadFile(file: File, doc?: Document) {
+	const link = (doc ?? getGlobalDocument()).createElement('a')
 	const url = URL.createObjectURL(file)
 	link.href = url
 	link.download = file.name

@@ -1,20 +1,28 @@
-import { ApiItem, ApiItemKind, ApiModel } from '@microsoft/api-extractor-model'
-import {
-	DocCodeSpan,
-	DocEscapedText,
-	DocFencedCode,
-	DocLinkTag,
-	DocNode,
-	DocParagraph,
-	DocPlainText,
-	DocSection,
-	DocSoftBreak,
-} from '@microsoft/tsdoc'
-import { assert } from '@tldraw/utils'
-import { slug as githubSlug } from 'github-slugger'
-
 import path from 'path'
-import prettier from 'prettier'
+import { ApiItem, ApiItemKind, ApiModel } from '@microsoft/api-extractor-model'
+import { slug as githubSlug } from 'github-slugger'
+import { format } from 'oxfmt'
+
+/**
+ * Structural interface for DocNode-like objects from any version of @microsoft/tsdoc.
+ * This allows us to work with DocNodes from both the standalone @microsoft/tsdoc package
+ * and the version bundled in @microsoft/api-extractor-model without type conflicts.
+ */
+interface AnyDocNode {
+	readonly kind: string
+	getChildNodes?(): ReadonlyArray<AnyDocNode>
+	// Properties for specific node types
+	text?: string // DocPlainText
+	nodes?: ReadonlyArray<AnyDocNode> // DocSection, DocParagraph
+	content?: { nodes: ReadonlyArray<AnyDocNode> } // DocBlock
+	code?: string // DocCodeSpan, DocFencedCode
+	language?: string // DocFencedCode
+	encodedText?: string // DocEscapedText
+	urlDestination?: string // DocLinkTag
+	linkText?: string // DocLinkTag
+	codeDestination?: any // DocLinkTag - DeclarationReference from either version
+}
+
 export const API_DIR = path.join(process.cwd(), 'api')
 export const CONTENT_DIR = path.join(process.cwd(), 'content')
 export const PUBLIC_DIR = path.join(process.cwd(), 'public')
@@ -59,6 +67,14 @@ export function getPath(item: ApiItem): string {
 		return `${parentPath}#${childSlug}`
 	}
 
+	// Members of a namespace are rendered on the namespace page, not as
+	// standalone pages. Link to the namespace page with an anchor.
+	if (item.parent && item.parent.kind === ApiItemKind.Namespace) {
+		const parentPath = getPath(item.parent)
+		const childSlug = getSlug(item)
+		return `${parentPath}#${childSlug}`
+	}
+
 	return item.canonicalReference
 		.toString()
 		.replace(/^@tldraw\//, '')
@@ -67,10 +83,9 @@ export function getPath(item: ApiItem): string {
 		.replace(/\./g, '-')
 }
 
-const prettierConfigPromise = prettier.resolveConfig(__dirname)
 const languages: { [tag: string]: string | undefined } = {
-	ts: 'typescript',
-	tsx: 'typescript',
+	ts: 'ts',
+	tsx: 'tsx',
 }
 
 export async function formatWithPrettier(
@@ -85,21 +100,19 @@ export async function formatWithPrettier(
 	if (!language) {
 		throw new Error(`Unknown language: ${languageTag}`)
 	}
-	const prettierConfig = await prettierConfigPromise
 	let formattedCode = code
 	try {
-		formattedCode = await prettier.format(code, {
-			...prettierConfig,
-			parser: language,
+		const result = await format(`snippet.${language}`, code, {
 			printWidth,
 			tabWidth: 2,
 			useTabs: false,
 		})
+		formattedCode = result.code
 	} catch {
 		console.warn(`☢️ Could not format code: ${code}`)
 	}
 
-	// sometimes prettier adds a semicolon to the start of the code when formatting expressions (JSX
+	// sometimes formatters add a semicolon to the start of the code when formatting expressions (JSX
 	// in particular), so strip it if we see it
 	if (formattedCode.startsWith(';')) {
 		formattedCode = formattedCode.slice(1)
@@ -109,7 +122,7 @@ export async function formatWithPrettier(
 }
 
 export class MarkdownWriter {
-	static async docNodeToMarkdown(apiContext: ApiItem, docNode: DocNode) {
+	static async docNodeToMarkdown(apiContext: ApiItem, docNode: AnyDocNode) {
 		const writer = new MarkdownWriter(apiContext)
 		await writer.writeDocNode(docNode)
 		return writer.toString()
@@ -135,67 +148,106 @@ export class MarkdownWriter {
 		return this
 	}
 
-	async writeDocNode(docNode: DocNode) {
-		if (docNode instanceof DocPlainText) {
-			this.write(docNode.text)
-		} else if (docNode instanceof DocSection || docNode instanceof DocParagraph) {
-			await this.writeDocNodes(docNode.nodes)
-			this.writeIfNeeded('\n\n')
-		} else if (docNode instanceof DocSoftBreak) {
-			this.writeIfNeeded('\n')
-		} else if (docNode instanceof DocCodeSpan) {
-			this.write('`', docNode.code, '`')
-		} else if (docNode instanceof DocFencedCode) {
-			this.writeIfNeeded('\n').write(
-				'```',
-				docNode.language,
-				'\n',
-				await formatWithPrettier(docNode.code, {
-					languageTag: docNode.language,
-				}),
-				'\n',
-				'```\n'
-			)
-		} else if (docNode instanceof DocEscapedText) {
-			this.write(docNode.encodedText)
-		} else if (docNode instanceof DocLinkTag) {
-			if (docNode.urlDestination) {
-				this.write(
-					'[',
-					docNode.linkText ?? docNode.urlDestination,
-					'](',
-					docNode.urlDestination,
-					')'
-				)
-			} else {
-				assert(docNode.codeDestination)
-				const apiModel = getTopLevelModel(this.apiContext)
-				const refResult = apiModel.resolveDeclarationReference(
-					docNode.codeDestination,
-					this.apiContext
-				)
+	async writeDocNode(docNode: AnyDocNode) {
+		// Use kind property instead of instanceof checks for better compatibility
+		switch (docNode.kind) {
+			case 'PlainText':
+				if (docNode.text) this.write(docNode.text)
+				break
 
-				if (refResult.errorMessage) {
-					console.warn(`☢️ Error processing API: ${refResult.errorMessage}`)
-					return
+			case 'Section':
+			case 'Paragraph':
+				if (docNode.nodes) await this.writeDocNodes(docNode.nodes)
+				this.writeIfNeeded('\n\n')
+				break
+
+			case 'Block':
+				// DocBlock is a container node, process its content
+				if (docNode.content?.nodes) await this.writeDocNodes(docNode.content.nodes)
+				this.writeIfNeeded('\n\n')
+				break
+
+			case 'SoftBreak':
+				this.writeIfNeeded('\n')
+				break
+
+			case 'CodeSpan':
+				if (docNode.code) this.write('`', docNode.code, '`')
+				break
+
+			case 'FencedCode': {
+				if (docNode.code) {
+					this.writeIfNeeded('\n').write(
+						'```',
+						docNode.language || '',
+						'\n',
+						await formatWithPrettier(docNode.code, {
+							languageTag: docNode.language,
+						}),
+						'\n',
+						'```\n'
+					)
 				}
-				const linkedItem = refResult.resolvedApiItem!
-				const path = getPath(linkedItem)
-
-				this.write(
-					'[',
-					docNode.linkText ?? getDefaultReferenceText(linkedItem),
-					'](/reference/',
-					path,
-					')'
-				)
+				break
 			}
-		} else {
-			throw new Error(`Unknown docNode kind: ${docNode.kind}`)
+
+			case 'EscapedText':
+				if (docNode.encodedText) this.write(docNode.encodedText)
+				break
+
+			case 'ErrorText':
+				// Skip error text nodes
+				break
+
+			case 'LinkTag': {
+				if (docNode.urlDestination) {
+					this.write(
+						'[',
+						docNode.linkText ?? docNode.urlDestination,
+						'](',
+						docNode.urlDestination,
+						')'
+					)
+				} else if (docNode.codeDestination) {
+					const apiModel = getTopLevelModel(this.apiContext)
+					const refResult = apiModel.resolveDeclarationReference(
+						docNode.codeDestination,
+						this.apiContext
+					)
+
+					if (refResult.errorMessage) {
+						console.warn(`☢️ Error processing API: ${refResult.errorMessage}`)
+						break
+					}
+					const linkedItem = refResult.resolvedApiItem!
+					const path = getPath(linkedItem)
+
+					this.write(
+						'[',
+						docNode.linkText ?? getDefaultReferenceText(linkedItem),
+						'](/reference/',
+						path,
+						')'
+					)
+				}
+				break
+			}
+
+			default:
+				// Handle any unknown container nodes generically by checking if they have a 'nodes' property
+				if (docNode.nodes && Array.isArray(docNode.nodes)) {
+					await this.writeDocNodes(docNode.nodes)
+					this.writeIfNeeded('\n\n')
+				} else if (docNode.content?.nodes) {
+					await this.writeDocNodes(docNode.content.nodes)
+					this.writeIfNeeded('\n\n')
+				} else {
+					console.warn(`⚠️  Unknown docNode kind: ${docNode.kind}, skipping...`)
+				}
 		}
 	}
 
-	async writeDocNodes(docNodes: readonly DocNode[]) {
+	async writeDocNodes(docNodes: ReadonlyArray<AnyDocNode>) {
 		for (const docNode of docNodes) {
 			await this.writeDocNode(docNode)
 		}

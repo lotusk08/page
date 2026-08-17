@@ -6,6 +6,7 @@ import {
 	TLDrawShape,
 	TLDrawShapeSegment,
 	Vec,
+	b64Vecs,
 	modulate,
 } from '@tldraw/editor'
 import { StrokeOptions } from '../shared/freehand/types'
@@ -101,19 +102,51 @@ export function getFreehandOptions(
 	return { ...solidSettings(strokeWidth), last }
 }
 
-export function getPointsFromSegments(segments: TLDrawShapeSegment[]) {
+/** @public */
+export function getPointsFromDrawSegment(
+	segment: TLDrawShapeSegment,
+	scaleX: number,
+	scaleY: number,
+	points: Vec[] = []
+) {
+	const _points = b64Vecs.decodePoints(segment.path, segment.dim)
+
+	// Apply scale factors (used for lazy resize and flipping)
+	if (scaleX !== 1 || scaleY !== 1) {
+		for (const point of _points) {
+			point.x *= scaleX
+			point.y *= scaleY
+		}
+	}
+
+	if (segment.type === 'free' || _points.length < 2) {
+		points.push(..._points.map(Vec.From))
+	} else {
+		// A B <interpolated points> D
+		const A = Vec.From(_points[0])
+		const D = Vec.From(_points[1])
+		const dist = Vec.Dist(D, A)
+		if (dist === 0) {
+			points.push(A)
+		} else {
+			const uni = Vec.Tan(D, A)
+			const nudgeDist = Math.min(1, Math.floor(dist / 4))
+			const B = Vec.Add(A, Vec.Mul(uni, nudgeDist))
+			const C = Vec.Add(D, Vec.Mul(uni, -nudgeDist))
+			const interpolatedPointsCount = Math.max(4, Math.floor(dist / 16))
+			points.push(A, ...Vec.PointsBetween(B, C, interpolatedPointsCount, EASINGS.easeInOutCubic), D)
+		}
+	}
+
+	return points
+}
+
+/** @public */
+export function getPointsFromDrawSegments(segments: TLDrawShapeSegment[], scaleX = 1, scaleY = 1) {
 	const points: Vec[] = []
 
 	for (const segment of segments) {
-		if (segment.type === 'free' || segment.points.length < 2) {
-			points.push(...segment.points.map(Vec.Cast))
-		} else {
-			const pointsToInterpolate = Math.max(
-				4,
-				Math.floor(Vec.Dist(segment.points[0], segment.points[1]) / 16)
-			)
-			points.push(...Vec.PointsBetween(segment.points[0], segment.points[1], pointsToInterpolate))
-		}
+		getPointsFromDrawSegment(segment, scaleX, scaleY, points)
 	}
 
 	return points
@@ -129,5 +162,6 @@ export function getDrawShapeStrokeDashArray(
 		solid: `none`,
 		dotted: `${dotAdjustment} ${strokeWidth * 2}`,
 		dashed: `${strokeWidth * 2} ${strokeWidth * 2}`,
+		none: `none`,
 	}[shape.props.dash]
 }

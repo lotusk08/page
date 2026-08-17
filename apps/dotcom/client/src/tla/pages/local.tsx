@@ -1,57 +1,104 @@
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { assert, react } from 'tldraw'
+import { useLocation, useNavigate } from 'react-router-dom'
+import { assert, getFromSessionStorage, omit, react } from 'tldraw'
 import { LocalEditor } from '../../components/LocalEditor'
 import { routes } from '../../routeDefs'
 import { globalEditor } from '../../utils/globalEditor'
-import { SneakyDarkModeSync } from '../components/TlaEditor/SneakyDarkModeSync'
+import { TlaAnonDotDevLink } from '../components/TlaAnonDotDevLink/TlaAnonDotDevLink'
+import { SneakyDarkModeSync } from '../components/TlaEditor/sneaky/SneakyDarkModeSync'
+import { SneakyDebugModeToast } from '../components/TlaEditor/sneaky/SneakyDebugModeToast'
 import { components } from '../components/TlaEditor/TlaEditor'
 import { useMaybeApp } from '../hooks/useAppState'
 import { TlaAnonLayout } from '../layouts/TlaAnonLayout/TlaAnonLayout'
+import { importFromUrl } from '../utils/importFromUrl'
+import { clearRedirectOnSignIn } from '../utils/redirect'
+import { SESSION_STORAGE_KEYS } from '../utils/session-storage'
 import { clearShouldSlurpFile, getShouldSlurpFile, setShouldSlurpFile } from '../utils/slurping'
 
 export function Component() {
 	const app = useMaybeApp()
 	const navigate = useNavigate()
+	const location = useLocation()
 
 	useEffect(() => {
 		const handleFileOperations = async () => {
 			if (!app) return
 
+			// Check for redirect-to first (set by OAuth sign-in)
+			const redirectTo = getFromSessionStorage(SESSION_STORAGE_KEYS.REDIRECT)
+			if (redirectTo) {
+				clearRedirectOnSignIn()
+				if (redirectTo.startsWith('/')) {
+					navigate(redirectTo, { replace: true })
+					return
+				}
+			}
+
+			// Run pending import from URL (set by /import?url=... redirect)
+			const pendingImportUrl = location.state?.importUrl
+			if (pendingImportUrl) {
+				// need to remove importUrl from location state so it doesn't persist after the import
+				const state = omit(location.state, ['importUrl'])
+				const result = await importFromUrl(app, pendingImportUrl)
+				if (result.ok) {
+					navigate(routes.tlaFile(result.fileId), {
+						replace: true,
+						state,
+					})
+					return
+				} else {
+					// just update the state without navigating anywhere
+					navigate('.', { replace: true, state })
+				}
+				if (!result.toastAlreadyShown) {
+					app.toasts?.addToast({
+						severity: 'error',
+						title: 'Import failed',
+						description: result.error,
+						keepOpen: true,
+					})
+				}
+				return
+			}
+
 			if (getShouldSlurpFile()) {
 				const res = await app.slurpFile()
 				if (res.ok) {
 					clearShouldSlurpFile()
-					navigate(routes.tlaFile(res.value.file.id), {
+					navigate(routes.tlaFile(res.value.fileId), {
 						replace: true,
+						state: location.state,
 					})
+					return
 				} else {
 					// if the user has too many files we end up here.
 					// don't slurp the file and when they log out they'll
 					// be able to see the same content that was there before
 				}
-				return
 			}
 
-			const recentFiles = app.getUserRecentFiles()
-			if (recentFiles.length === 0) {
+			// Land on the file the user last had open, across all workspaces, not just home.
+			const mostRecentFileId = app.getMostRecentFileId()
+			if (!mostRecentFileId) {
 				const result = await app.createFile()
+
 				assert(result.ok, 'Failed to create file')
 				// result is only false if the user reached their file limit so
 				// we don't need to handle that case here since they have no files
 				if (result.ok) {
-					navigate(routes.tlaFile(result.value.file.id), {
+					navigate(routes.tlaFile(result.value.fileId), {
 						replace: true,
+						state: location.state,
 					})
 				}
 				return
 			}
 
-			navigate(routes.tlaFile(recentFiles[0].fileId), { replace: true })
+			navigate(routes.tlaFile(mostRecentFileId), { replace: true, state: location.state })
 		}
 
 		handleFileOperations()
-	}, [app, navigate])
+	}, [app, navigate, location])
 
 	if (!app) return <LocalTldraw />
 
@@ -80,6 +127,8 @@ function LocalTldraw() {
 				options={{ actionShortcutsLocation: 'toolbar' }}
 			>
 				<SneakyDarkModeSync />
+				<SneakyDebugModeToast />
+				<TlaAnonDotDevLink />
 			</LocalEditor>
 		</TlaAnonLayout>
 	)

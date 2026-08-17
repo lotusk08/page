@@ -18,6 +18,7 @@
 	},
 	"keywords": [
 		"tldraw",
+		"sdk",
 		"drawing",
 		"app",
 		"development",
@@ -38,7 +39,7 @@
 		"build:staging": "yarn run -T tsx build-workspace-app.ts"
 	},
 	"dependencies": {
-		"@google/clasp": "^2.5.0"
+		"@google/clasp": "^3.2.0"
 	},
 	"devDependencies": {
 		"@types/google-apps-script": "^1.0.91"

@@ -1,5 +1,4 @@
 import { getAssetUrlsByMetaUrl } from '@tldraw/assets/urls'
-import { Analytics as VercelAnalytics } from '@vercel/analytics/react'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Helmet, HelmetProvider } from 'react-helmet-async'
@@ -11,21 +10,21 @@ import {
 	setDefaultUiAssetUrls,
 } from 'tldraw'
 import { ExamplePage } from './ExamplePage'
-import { ExampleWrapper } from './ExampleWrapper'
 import { examples } from './examples'
+import { ExampleWrapper } from './ExampleWrapper'
 import Develop from './misc/develop'
 import EndToEnd from './misc/end-to-end'
+
+const ENABLE_STRICT_MODE = false
 
 // we use secret internal `setDefaultAssetUrls` functions to set these at the
 // top-level so assets don't need to be passed down in every single example.
 const assetUrls = getAssetUrlsByMetaUrl()
-// eslint-disable-next-line local/no-at-internal
 setDefaultEditorAssetUrls(assetUrls)
-// eslint-disable-next-line local/no-at-internal
 setDefaultUiAssetUrls(assetUrls)
 const gettingStartedExamples = examples.find((e) => e.id === 'Getting started')
 if (!gettingStartedExamples) throw new Error('Could not find getting started examples')
-const basicExample = gettingStartedExamples.value.find((e) => e.title === 'Tldraw component')
+const basicExample = gettingStartedExamples.value[0]
 if (!basicExample) throw new Error('Could not find initial example')
 
 const router = createBrowserRouter([
@@ -102,20 +101,18 @@ function NoIndex({ children }: { children: React.ReactNode }) {
 document.addEventListener('DOMContentLoaded', () => {
 	const rootElement = document.getElementById('root')!
 	const root = createRoot(rootElement!)
-	root.render(
-		<StrictMode>
-			<ErrorBoundary
-				fallback={(error) => <DefaultErrorFallback error={error} />}
-				onError={(error) => console.error(error)}
-			>
-				<HelmetProvider>
-					<RootMeta />
-					<RouterProvider router={router} />
-					<VercelAnalytics />
-				</HelmetProvider>
-			</ErrorBoundary>
-		</StrictMode>
+	const main = (
+		<ErrorBoundary
+			fallback={(error) => <DefaultErrorFallback error={error} />}
+			onError={(error) => console.error(error)}
+		>
+			<HelmetProvider>
+				<RootMeta />
+				<RouterProvider router={router} />
+			</HelmetProvider>
+		</ErrorBoundary>
 	)
+	root.render(ENABLE_STRICT_MODE ? <StrictMode>{main}</StrictMode> : main)
 })
 
 function RootMeta() {

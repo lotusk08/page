@@ -1,4 +1,10 @@
-import { StateNode, TLCursorType, TLPointerEventInfo, TLSelectionHandle } from '@tldraw/editor'
+import {
+	StateNode,
+	TLClickEventInfo,
+	TLCursorType,
+	TLPointerEventInfo,
+	TLSelectionHandle,
+} from '@tldraw/editor'
 
 export const CursorTypeMap: Record<TLSelectionHandle, TLCursorType> = {
 	bottom: 'ns-resize',
@@ -17,7 +23,7 @@ export const CursorTypeMap: Record<TLSelectionHandle, TLCursorType> = {
 }
 
 type PointingResizeHandleInfo = Extract<TLPointerEventInfo, { target: 'selection' }> & {
-	onInteractionEnd?: string
+	onInteractionEnd?: string | (() => void)
 }
 
 export class PointingResizeHandle extends StateNode {
@@ -26,21 +32,27 @@ export class PointingResizeHandle extends StateNode {
 	private info = {} as PointingResizeHandleInfo
 
 	private updateCursor() {
-		const selected = this.editor.getSelectedShapes()
 		const cursorType = CursorTypeMap[this.info.handle!]
 		this.editor.setCursor({
 			type: cursorType,
-			rotation: selected.length === 1 ? this.editor.getSelectionRotation() : 0,
+			rotation: this.editor.getSelectionRotation(),
 		})
 	}
 
 	override onEnter(info: PointingResizeHandleInfo) {
 		this.info = info
+		if (typeof info.onInteractionEnd === 'string') {
+			this.parent.setCurrentToolIdMask(info.onInteractionEnd)
+		}
 		this.updateCursor()
 	}
 
+	override onExit() {
+		this.parent.setCurrentToolIdMask(undefined)
+	}
+
 	override onPointerMove() {
-		if (this.editor.inputs.isDragging) {
+		if (this.editor.inputs.getIsDragging()) {
 			this.startResizing()
 		}
 	}
@@ -58,6 +70,20 @@ export class PointingResizeHandle extends StateNode {
 		this.complete()
 	}
 
+	override onDoubleClick(info: TLClickEventInfo) {
+		if (
+			this.editor.inputs.getShiftKey() ||
+			info.phase !== 'down' ||
+			info.ctrlKey ||
+			info.shiftKey
+		) {
+			return
+		}
+
+		this.parent.transition('idle')
+		this.parent.getCurrent()?.handleEvent(info)
+	}
+
 	override onCancel() {
 		this.cancel()
 	}
@@ -71,18 +97,28 @@ export class PointingResizeHandle extends StateNode {
 	}
 
 	private complete() {
-		if (this.info.onInteractionEnd) {
-			this.editor.setCurrentTool(this.info.onInteractionEnd, {})
-		} else {
-			this.parent.transition('idle')
+		const { onInteractionEnd } = this.info
+		if (onInteractionEnd) {
+			if (typeof onInteractionEnd === 'string') {
+				this.editor.setCurrentTool(onInteractionEnd, {})
+			} else {
+				onInteractionEnd()
+			}
+			return
 		}
+		this.parent.transition('idle')
 	}
 
 	private cancel() {
-		if (this.info.onInteractionEnd) {
-			this.editor.setCurrentTool(this.info.onInteractionEnd, {})
-		} else {
-			this.parent.transition('idle')
+		const { onInteractionEnd } = this.info
+		if (onInteractionEnd) {
+			if (typeof onInteractionEnd === 'string') {
+				this.editor.setCurrentTool(onInteractionEnd, {})
+			} else {
+				onInteractionEnd()
+			}
+			return
 		}
+		this.parent.transition('idle')
 	}
 }

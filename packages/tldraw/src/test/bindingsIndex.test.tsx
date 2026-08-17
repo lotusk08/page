@@ -1,6 +1,5 @@
-import { TLArrowBinding, TLGeoShape, TLShapeId, createShapeId } from '@tldraw/editor'
+import { TLShapeId, createShapeId } from '@tldraw/editor'
 import { TestEditor } from './TestEditor'
-import { TL } from './test-jsx'
 
 let editor: TestEditor
 
@@ -10,9 +9,13 @@ beforeEach(() => {
 
 describe('bindingsIndex', () => {
 	it('keeps a mapping from bound shapes to their bindings', () => {
-		const ids = editor.createShapesFromJsx([
-			<TL.geo ref="box1" x={0} y={0} w={100} h={100} fill="solid" />,
-			<TL.geo ref="box2" x={200} y={0} w={100} h={100} fill="solid" />,
+		const ids = {
+			box1: createShapeId('box1'),
+			box2: createShapeId('box2'),
+		}
+		editor.createShapes([
+			{ id: ids.box1, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100, fill: 'solid' } },
+			{ id: ids.box2, type: 'geo', x: 200, y: 0, props: { w: 100, h: 100, fill: 'solid' } },
 		])
 
 		editor.selectNone()
@@ -123,9 +126,13 @@ describe('bindingsIndex', () => {
 		let arrowEId: TLShapeId
 		let ids: Record<string, TLShapeId>
 		beforeEach(() => {
-			ids = editor.createShapesFromJsx([
-				<TL.geo ref="box1" x={0} y={0} w={100} h={100} />,
-				<TL.geo ref="box2" x={200} y={0} w={100} h={100} />,
+			ids = {
+				box1: createShapeId('box1'),
+				box2: createShapeId('box2'),
+			}
+			editor.createShapes([
+				{ id: ids.box1, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } },
+				{ id: ids.box2, type: 'geo', x: 200, y: 0, props: { w: 100, h: 100 } },
 			])
 
 			// span both boxes
@@ -197,9 +204,8 @@ describe('bindingsIndex', () => {
 
 			// create a new box
 
-			const { box3 } = editor.createShapesFromJsx(
-				<TL.geo ref="box3" x={400} y={0} w={100} h={100} />
-			)
+			const box3 = createShapeId('box3')
+			editor.createShapes([{ id: box3, type: 'geo', x: 400, y: 0, props: { w: 100, h: 100 } }])
 
 			// draw from box 2 to box 3
 
@@ -219,7 +225,7 @@ describe('bindingsIndex', () => {
 
 			const [box1Clone, box2Clone] = editor
 				.getSelectedShapes()
-				.filter((shape) => editor.isShapeOfType<TLGeoShape>(shape, 'geo'))
+				.filter((shape) => editor.isShapeOfType(shape, 'geo'))
 				.sort((a, b) => a.x - b.x)
 
 			expect(editor.getArrowsBoundTo(box2Clone.id)).toHaveLength(3)
@@ -242,15 +248,14 @@ describe('bindingsIndex', () => {
 
 			// create another box
 
-			const { box3 } = editor.createShapesFromJsx(
-				<TL.geo ref="box3" x={400} y={0} w={100} h={100} />
-			)
+			const box3 = createShapeId('box3')
+			editor.createShapes([{ id: box3, type: 'geo', x: 400, y: 0, props: { w: 100, h: 100 } }])
 
 			// move arrowA end from box2 to box3
 			const binding = editor
-				.getBindingsInvolvingShape<TLArrowBinding>(ids.box2, 'arrow')
+				.getBindingsInvolvingShape(ids.box2, 'arrow')
 				.find((b) => b.props.terminal === 'end')!
-			editor.updateBinding({ ...binding, toId: box3 } satisfies TLArrowBinding)
+			editor.updateBinding({ ...binding, toId: box3 })
 
 			expect(editor.getArrowsBoundTo(ids.box2)).toHaveLength(2)
 			expect(editor.getArrowsBoundTo(ids.box1)).toHaveLength(3)

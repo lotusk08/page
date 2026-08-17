@@ -1,16 +1,17 @@
 import {
 	Box,
 	Editor,
-	TLFrameShape,
+	TLBaseBoxShape,
 	TLShape,
 	TLShapeId,
 	TLShapePartial,
 	Vec,
 	compact,
+	kickoutOccludedShapes,
 } from '@tldraw/editor'
 
 /**
- * Remove a frame.
+ * Remove a frame (or any frame-like container shape).
  *
  * @param editor - tldraw editor instance.
  * @param ids - Ids of the frames you wish to remove.
@@ -20,8 +21,8 @@ import {
 export function removeFrame(editor: Editor, ids: TLShapeId[]) {
 	const frames = compact(
 		ids
-			.map((id) => editor.getShape<TLFrameShape>(id))
-			.filter((f) => f && editor.isShapeOfType<TLFrameShape>(f, 'frame'))
+			.map((id) => editor.getShape<TLBaseBoxShape>(id))
+			.filter((f) => f && editor.isShapeFrameLike(f))
 	)
 	if (!frames.length) return
 
@@ -30,7 +31,9 @@ export function removeFrame(editor: Editor, ids: TLShapeId[]) {
 		frames.map((frame) => {
 			const children = editor.getSortedChildIdsForParent(frame.id)
 			if (children.length) {
-				editor.reparentShapes(children, frame.parentId, frame.index)
+				kickoutOccludedShapes(editor, children, {
+					filter: (s) => !frames.find((f) => f.id === s.id),
+				})
 				allChildren.push(...children)
 			}
 		})
@@ -66,7 +69,7 @@ export function getFrameChildrenBounds(
 }
 
 /**
- * Fit a frame to its content.
+ * Fit a frame (or any frame-like container shape) to its content.
  *
  * @param id - Id of the frame you wish to fit to content.
  * @param editor - tlraw editor instance.
@@ -75,8 +78,8 @@ export function getFrameChildrenBounds(
  * @public
  */
 export function fitFrameToContent(editor: Editor, id: TLShapeId, opts = {} as { padding: number }) {
-	const frame = editor.getShape<TLFrameShape>(id)
-	if (!frame) return
+	const frame = editor.getShape<TLBaseBoxShape>(id)
+	if (!frame || !editor.isShapeFrameLike(frame)) return
 
 	const childIds = editor.getSortedChildIdsForParent(frame.id)
 	const children = compact(childIds.map((id) => editor.getShape(id)))

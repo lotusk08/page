@@ -14,26 +14,27 @@ import {
 	bind,
 	compact,
 	isPageId,
+	kickoutOccludedShapes,
 } from '@tldraw/editor'
 import {
 	NOTE_ADJACENT_POSITION_SNAP_RADIUS,
-	NOTE_CENTER_OFFSET,
 	getAvailableNoteAdjacentPositions,
 } from '../../../shapes/note/noteHelpers'
+import type { NoteShapeUtil } from '../../../shapes/note/NoteShapeUtil'
+import { getDisplayValues } from '../../../shapes/shared/getDisplayValues'
 import { DragAndDropManager } from '../DragAndDropManager'
-import { kickoutOccludedShapes } from '../selectHelpers'
 
 export type TranslatingInfo = TLPointerEventInfo & {
 	target: 'shape'
 	isCreating?: boolean
 	creatingMarkId?: string
 	onCreate?(): void
-	didStartInPit?: boolean
-	onInteractionEnd?: string
+	onInteractionEnd?: string | (() => void)
 }
 
 export class Translating extends StateNode {
 	static override id = 'translating'
+	static override trackPerformance = true
 
 	info = {} as TranslatingInfo
 
@@ -60,7 +61,9 @@ export class Translating extends StateNode {
 		}
 
 		this.info = info
-		this.parent.setCurrentToolIdMask(info.onInteractionEnd)
+		if (typeof info.onInteractionEnd === 'string') {
+			this.parent.setCurrentToolIdMask(info.onInteractionEnd)
+		}
 		this.isCreating = isCreating
 
 		this.markId = ''
@@ -91,9 +94,9 @@ export class Translating extends StateNode {
 
 		// Don't clone on create; otherwise clone on altKey
 		if (!this.isCreating) {
-			if (this.editor.inputs.altKey) {
+			if (this.editor.inputs.getAltKey()) {
 				this.startCloning()
-				return
+				if (this.isCloning) return
 			}
 		}
 
@@ -113,10 +116,7 @@ export class Translating extends StateNode {
 
 	override onTick({ elapsed }: TLTickEventInfo) {
 		const { editor } = this
-		this.dragAndDropManager.updateDroppingNode(
-			this.snapshot.movingShapes,
-			this.updateParentTransforms
-		)
+		if (!editor.inputs.getIsDragging() || editor.inputs.getIsPanning()) return
 		editor.edgeScrollManager.updateEdgeScrolling(elapsed)
 	}
 
@@ -125,9 +125,9 @@ export class Translating extends StateNode {
 	}
 
 	override onKeyDown() {
-		if (this.editor.inputs.altKey && !this.isCloning) {
+		if (this.editor.inputs.getAltKey() && !this.isCloning) {
 			this.startCloning()
-			return
+			if (this.isCloning) return
 		}
 
 		// need to update in case user pressed a different modifier key
@@ -135,7 +135,7 @@ export class Translating extends StateNode {
 	}
 
 	override onKeyUp() {
-		if (!this.editor.inputs.altKey && this.isCloning) {
+		if (!this.editor.inputs.getAltKey() && this.isCloning) {
 			this.stopCloning()
 			return
 		}
@@ -158,6 +158,10 @@ export class Translating extends StateNode {
 
 	protected startCloning() {
 		if (this.isCreating) return
+		const shapeIds = Array.from(this.editor.getSelectedShapeIds())
+
+		// If we can't create the shapes, don't even start cloning
+		if (!this.editor.canCreateShapes(shapeIds)) return
 
 		this.isCloning = true
 		this.reset()
@@ -185,30 +189,55 @@ export class Translating extends StateNode {
 	protected complete() {
 		this.updateShapes()
 		this.dragAndDropManager.dropShapes(this.snapshot.movingShapes)
+		this.handleEnd()
 		kickoutOccludedShapes(
 			this.editor,
 			this.snapshot.movingShapes.map((s) => s.id)
 		)
-		this.handleEnd()
 
-		if (this.editor.getInstanceState().isToolLocked && this.info.onInteractionEnd) {
-			this.editor.setCurrentTool(this.info.onInteractionEnd)
-		} else {
-			if (this.isCreating) {
-				this.onCreate?.(this.editor.getOnlySelectedShape())
+		const { onInteractionEnd } = this.info
+		if (onInteractionEnd) {
+			if (typeof onInteractionEnd === 'string') {
+				if (this.editor.getInstanceState().isToolLocked) {
+					this.editor.setCurrentTool(onInteractionEnd)
+					return
+				}
 			} else {
-				this.parent.transition('idle')
+				onInteractionEnd()
+				return
 			}
+		}
+
+		if (this.isCreating) {
+			this.onCreate?.(this.editor.getOnlySelectedShape())
+		} else {
+			this.parent.transition('idle')
 		}
 	}
 
 	private cancel() {
+		// Call onTranslateCancel callback before resetting
+		const { movingShapes } = this.snapshot
+
+		movingShapes.forEach((shape) => {
+			const current = this.editor.getShape(shape.id)
+			if (current) {
+				const util = this.editor.getShapeUtil(shape)
+				util.onTranslateCancel?.(shape, current)
+			}
+		})
+
 		this.reset()
-		if (this.info.onInteractionEnd) {
-			this.editor.setCurrentTool(this.info.onInteractionEnd)
-		} else {
-			this.parent.transition('idle', this.info)
+		const { onInteractionEnd } = this.info
+		if (onInteractionEnd) {
+			if (typeof onInteractionEnd === 'string') {
+				this.editor.setCurrentTool(onInteractionEnd)
+			} else {
+				onInteractionEnd()
+			}
+			return
 		}
+		this.parent.transition('idle', this.info)
 	}
 
 	protected handleStart() {
@@ -227,6 +256,14 @@ export class Translating extends StateNode {
 		if (changes.length > 0) {
 			this.editor.updateShapes(changes)
 		}
+
+		this.dragAndDropManager.startDraggingShapes(
+			// Get fresh shapes from the snapshot, in case onTranslateStart mutates the shape
+			compact(this.snapshot.movingShapes.map((s) => this.editor.getShape(s.id))),
+			// Start from the place where the user started dragging
+			this.editor.inputs.getOriginPagePoint(),
+			this.updateParentTransforms
+		)
 
 		this.editor.setHoveredShape(null)
 	}
@@ -268,7 +305,12 @@ export class Translating extends StateNode {
 	protected updateShapes() {
 		const { snapshot } = this
 
-		this.dragAndDropManager.updateDroppingNode(snapshot.movingShapes, this.updateParentTransforms)
+		// We should have started already, but hey
+		this.dragAndDropManager.startDraggingShapes(
+			snapshot.movingShapes,
+			this.editor.inputs.getOriginPagePoint(),
+			this.updateParentTransforms
+		)
 
 		moveShapesToPoint({
 			editor: this.editor,
@@ -303,7 +345,7 @@ export class Translating extends StateNode {
 
 		shapeSnapshots.forEach((shapeSnapshot) => {
 			const shape = editor.getShape(shapeSnapshot.shape.id)
-			if (!shape) return null
+			if (!shape) return
 			movingShapes.push(shape)
 
 			const parentTransform = isPageId(shape.parentId)
@@ -364,13 +406,12 @@ function getTranslatingSnapshot(editor: Editor) {
 
 	let noteAdjacentPositions: Vec[] | undefined
 	let noteSnapshot: (MovingShapeSnapshot & { shape: TLNoteShape }) | undefined
+	let noteCenterOffset: Vec | undefined
 
-	const { originPagePoint } = editor.inputs
+	const originPagePoint = editor.inputs.getOriginPagePoint()
 
 	const allHoveredNotes = shapeSnapshots.filter(
-		(s) =>
-			editor.isShapeOfType<TLNoteShape>(s.shape, 'note') &&
-			editor.isPointInShape(s.shape, originPagePoint)
+		(s) => editor.isShapeOfType(s.shape, 'note') && editor.isPointInShape(s.shape, originPagePoint)
 	) as (MovingShapeSnapshot & { shape: TLNoteShape })[]
 
 	if (allHoveredNotes.length === 0) {
@@ -390,12 +431,16 @@ function getTranslatingSnapshot(editor: Editor) {
 	}
 
 	if (noteSnapshot) {
-		noteAdjacentPositions = getAvailableNoteAdjacentPositions(
-			editor,
-			noteSnapshot.pageRotation,
-			noteSnapshot.shape.props.scale,
-			noteSnapshot.shape.props.growY ?? 0
-		)
+		const noteUtil = editor.getShapeUtil(noteSnapshot.shape) as NoteShapeUtil
+		const dv = getDisplayValues(noteUtil, noteSnapshot.shape)
+		noteAdjacentPositions = getAvailableNoteAdjacentPositions(editor, {
+			rotation: noteSnapshot.pageRotation,
+			scale: noteSnapshot.shape.props.scale,
+			extraHeight: noteSnapshot.shape.props.growY ?? 0,
+			noteWidth: dv.noteWidth,
+			noteHeight: dv.noteHeight,
+		})
+		noteCenterOffset = new Vec(dv.noteWidth / 2, dv.noteHeight / 2)
 	}
 
 	return {
@@ -406,6 +451,7 @@ function getTranslatingSnapshot(editor: Editor) {
 		initialSnapPoints,
 		noteAdjacentPositions,
 		noteSnapshot,
+		noteCenterOffset,
 	}
 }
 
@@ -430,19 +476,23 @@ export function moveShapesToPoint({
 	const {
 		noteSnapshot,
 		noteAdjacentPositions,
+		noteCenterOffset,
 		initialPageBounds,
 		initialSnapPoints,
 		shapeSnapshots,
 		averagePagePoint,
 	} = snapshot
 
+	const shiftKey = editor.inputs.getShiftKey()
+	const accelKey = editor.inputs.getAccelKey()
+
 	const isGridMode = editor.getInstanceState().isGridMode
 
 	const gridSize = editor.getDocumentSettings().gridSize
 
-	const delta = Vec.Sub(inputs.currentPagePoint, inputs.originPagePoint)
+	const delta = Vec.Sub(inputs.getCurrentPagePoint(), inputs.getOriginPagePoint())
 
-	const flatten: 'x' | 'y' | null = editor.inputs.shiftKey
+	const flatten: 'x' | 'y' | null = shiftKey
 		? Math.abs(delta.x) < Math.abs(delta.y)
 			? 'x'
 			: 'y'
@@ -458,9 +508,9 @@ export function moveShapesToPoint({
 	editor.snaps.clearIndicators()
 
 	// If the user isn't moving super quick
-	const isSnapping = editor.user.getIsSnapMode() ? !inputs.ctrlKey : inputs.ctrlKey
+	const isSnapping = editor.user.getIsSnapMode() ? !accelKey : accelKey
 	let snappedToPit = false
-	if (isSnapping && editor.inputs.pointerVelocity.len() < 0.5) {
+	if (isSnapping && editor.inputs.getPointerVelocity().len() < 0.5) {
 		// snapping
 		const { nudge } = editor.snaps.shapeBounds.snapTranslateShapes({
 			dragDelta: delta,
@@ -472,13 +522,13 @@ export function moveShapesToPoint({
 		delta.add(nudge)
 	} else {
 		// for sticky notes, snap to grid position next to other notes
-		if (noteSnapshot && noteAdjacentPositions) {
+		if (noteSnapshot && noteAdjacentPositions && noteCenterOffset) {
 			const { scale } = noteSnapshot.shape.props
 			const pageCenter = noteSnapshot.pagePoint
 				.clone()
 				.add(delta)
 				// use the middle of the note, disregarding extra height
-				.add(NOTE_CENTER_OFFSET.clone().mul(scale).rot(noteSnapshot.pageRotation))
+				.add(noteCenterOffset.clone().mul(scale).rot(noteSnapshot.pageRotation))
 
 			// Find the pit with the center closest to the put center
 			let min = NOTE_ADJACENT_POSITION_SNAP_RADIUS / editor.getZoomLevel() // in screen space
@@ -500,9 +550,9 @@ export function moveShapesToPoint({
 
 	const averageSnappedPoint = Vec.Add(averagePagePoint, delta)
 
-	// we don't want to snap to the grid if we're holding the ctrl key, if we've already snapped into a pit, or if we're showing snapping indicators
+	// we don't want to snap to the grid if we're holding the accel key, if we've already snapped into a pit, or if we're showing snapping indicators
 	const snapIndicators = editor.snaps.getIndicators()
-	if (isGridMode && !inputs.ctrlKey && !snappedToPit && snapIndicators.length === 0) {
+	if (isGridMode && !accelKey && !snappedToPit && snapIndicators.length === 0) {
 		averageSnappedPoint.snapToGrid(gridSize)
 	}
 

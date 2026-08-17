@@ -1,6 +1,6 @@
+import fs from 'fs'
 import { Page } from '@playwright/test'
 import { DB } from '@tldraw/dotcom-shared'
-import fs from 'fs'
 import { Kysely, PostgresDialect, sql } from 'kysely'
 import pg from 'pg'
 import { OTHER_USERS, USERS } from '../consts'
@@ -18,29 +18,9 @@ const db = new Kysely<DB>({
 	log: ['error'],
 })
 
-const defaultUser = {
-	color: 'salmon',
-	avatar: '',
-	exportFormat: 'png',
-	exportTheme: 'light',
-	exportBackground: false,
-	exportPadding: false,
-	createdAt: 1731610733963,
-	updatedAt: 1731610733963,
-	flags: '',
-	locale: null,
-	animationSpeed: null,
-	edgeScrollSpeed: null,
-	colorScheme: null,
-	isSnapMode: null,
-	isWrapMode: null,
-	isDynamicSizeMode: null,
-	isPasteAtCursorMode: null,
-}
-
 export class Database {
 	constructor(
-		readonly page: Page,
+		readonly page: Page | null,
 		private parallelIndex: number
 	) {}
 
@@ -49,8 +29,15 @@ export class Database {
 		await this.cleanUpUser(false)
 	}
 
+	getEmail(isOther: boolean = false) {
+		return getTestUserEmail(this.parallelIndex, isOther ? 'suppy' : 'huppy')
+	}
+
 	async getUserId(isOther: boolean = false) {
-		const email = isOther ? OTHER_USERS[this.parallelIndex] : USERS[this.parallelIndex]
+		return await this.getUserIdByEmail(this.getEmail(isOther))
+	}
+
+	async getUserIdByEmail(email: string) {
 		const dbUser = await sql<{
 			id: string
 		}>`SELECT id FROM public.user WHERE email = ${email ?? ''}`.execute(db)
@@ -64,12 +51,18 @@ export class Database {
 		const id = await this.getUserId(isOther)
 		if (!id) return
 		try {
-			await db.updateTable('user').set(defaultUser).where('id', '=', id).execute()
-
-			await sql`DELETE FROM public.file WHERE "ownerId" = ${id}`.execute(db)
-			// await fetch(`http://localhost:3000/api/app/__test__/user/${id}/reboot`)
+			// eslint-disable-next-line no-restricted-globals
+			await fetch(`http://localhost:3000/api/app/__test__/user/${id}/prepare-for-test`, {
+				method: 'POST',
+			})
 		} catch (e) {
 			console.error('Error', e)
 		}
 	}
+}
+
+export type TestUser = 'huppy' | 'suppy'
+
+export function getTestUserEmail(index: number, user: TestUser) {
+	return user === 'suppy' ? OTHER_USERS[index] : USERS[index]
 }

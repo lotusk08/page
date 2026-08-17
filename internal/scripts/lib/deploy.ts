@@ -1,6 +1,6 @@
-import * as github from '@actions/github'
 import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import * as github from '@actions/github'
 import { exec } from './exec'
 
 export function getDeployInfo() {
@@ -173,26 +173,45 @@ export async function setWranglerPreviewConfig(
 	location: string,
 	{
 		name,
-		customDomain,
+		routeHostname,
 		serviceBinding,
-	}: { name: string; customDomain?: string; serviceBinding?: ServiceBinding }
+	}: { name: string; routeHostname?: string; serviceBinding?: ServiceBinding },
+	queueName?: string
 ) {
+	// A zone route instead of a custom domain: custom domains mint a dedicated
+	// certificate pack per hostname, while routes are covered by the zone's
+	// universal wildcard cert and the existing proxied *.tldraw.xyz DNS record.
+	const zoneName = routeHostname?.split('.').slice(-2).join('.')
 	const additionalProperties = `name = "${name}"
-${customDomain ? `routes = [ { pattern = "${customDomain}", custom_domain = true} ]` : ''}
+${routeHostname ? `routes = [ { pattern = "${routeHostname}/*", zone_name = "${zoneName}" } ]` : ''}
 ${serviceBinding ? `services = [ {binding = "${serviceBinding.binding}", service = "${serviceBinding.service}" } ]` : ''}`
 
-	const additionalSection = `\n[env.preview]\n${additionalProperties}\n`
+	const envPreviewSection = `\n[env.preview]\n${additionalProperties}\n`
 
 	const path = join(location, 'wrangler.toml')
 	let data = readFileSync(path).toString()
-	if (data.includes('\n[env.preview]\n')) {
-		if (!data.includes(additionalSection)) {
-			data = data.replace('\n[env.preview]\n', additionalSection)
-		} else {
-			// it was already added?
-		}
+
+	// Replace the entire [env.preview] section including all its properties
+	// Match from [env.preview] to the next section or end of file
+	const previewSectionRegex = /\n\[env\.preview\]\n(?:[^[](?:[^\n]*\n)*)?/
+
+	if (previewSectionRegex.test(data)) {
+		data = data.replace(previewSectionRegex, envPreviewSection)
 	} else {
-		data += additionalSection
+		data += envPreviewSection
 	}
+
+	if (queueName) {
+		const envPreviewQueuesSection = `\n[[env.preview.queues.producers]]
+queue = "${queueName}"
+binding = "QUEUE"
+
+[[env.preview.queues.consumers]]
+queue = "${queueName}"
+max_retries =10
+`
+		data += envPreviewQueuesSection
+	}
+
 	writeFileSync(path, data)
 }

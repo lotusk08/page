@@ -1,9 +1,10 @@
-import { DocsCategoryMenu } from '@/components/docs/docs-category-menu'
-import { DocsSidebarMenu } from '@/components/docs/docs-sidebar-menu'
-import { db } from '@/utils/ContentDatabase'
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react'
 import { Bars3Icon } from '@heroicons/react/16/solid'
 import { XMarkIcon } from '@heroicons/react/20/solid'
+import { DocsCategoryMenu } from '@/components/docs/docs-category-menu'
+import { DocsSidebarMenu } from '@/components/docs/docs-sidebar-menu'
+import { processSidebarContent } from '@/components/docs/docs-sidebar-utils'
+import { db } from '@/utils/ContentDatabase'
 
 export async function DocsMobileSidebar({
 	sectionId,
@@ -15,9 +16,7 @@ export async function DocsMobileSidebar({
 	articleId?: string
 }) {
 	const sidebar = await db.getSidebarContentList({ sectionId, categoryId, articleId })
-	const skipFirstLevel = ['reference', 'examples'].includes(sectionId ?? '')
-	// @ts-ignore
-	const elements = skipFirstLevel ? sidebar.links[0].children : sidebar.links
+	const elements = processSidebarContent(sidebar, sectionId)
 
 	return (
 		<Popover className="group/popover h-full grow">
@@ -36,7 +35,13 @@ export async function DocsMobileSidebar({
 					<DocsCategoryMenu />
 					{elements.map((menu: any, index: number) => (
 						// @ts-ignore
-						<DocsSidebarMenu key={index} title={menu.title} elements={menu.children} />
+						<DocsSidebarMenu
+							key={index}
+							title={menu.title}
+							elements={menu.children}
+							isFirst={index === 0}
+							hideTitle={elements.length === 1}
+						/>
 					))}
 				</div>
 			</PopoverPanel>

@@ -1,32 +1,35 @@
-import { expect } from '@jest/globals'
-import type { MatcherFunction } from 'expect'
 import { join } from 'path'
 import { ReactElement } from 'react'
 import { Route, RouteObject, createRoutesFromElements } from 'react-router-dom'
-import { router } from './routes'
+import 'vitest'
+import { createAppRouter } from './routes'
 
-const toMatchAny: MatcherFunction<[regexes: unknown]> = function (actual, regexes) {
+declare module 'vitest' {
+	interface Assertion<T = any> {
+		toMatchAny(regexes: string[]): T
+	}
+	interface AsymmetricMatchersContaining {
+		toMatchAny(regexes: string[]): any
+	}
+}
+
+function toMatchAny(received: string, regexes: string[]) {
 	if (
-		typeof actual !== 'string' ||
+		typeof received !== 'string' ||
 		!Array.isArray(regexes) ||
 		regexes.some((regex) => typeof regex !== 'string')
 	) {
 		throw new Error('toMatchAny takes a string and an array of strings')
 	}
 
-	const pass = regexes.map((regex) => new RegExp(regex)).some((regex) => actual.match(regex))
-	if (pass) {
-		return {
-			message: () =>
-				`expected ${this.utils.printReceived(actual)} not to match any of the regexes ${this.utils.printExpected(regexes)}`,
-			pass: true,
-		}
-	} else {
-		return {
-			message: () =>
-				`expected ${this.utils.printReceived(actual)} to match at least one of the regexes ${this.utils.printExpected(regexes)}`,
-			pass: false,
-		}
+	const pass = regexes.map((regex) => new RegExp(regex)).some((regex) => received.match(regex))
+
+	return {
+		pass,
+		message: () =>
+			pass
+				? `expected ${received} not to match any of the regexes ${regexes}`
+				: `expected ${received} to match at least one of the regexes ${regexes}`,
 	}
 }
 
@@ -64,8 +67,10 @@ function convertReactToVercel(path: string): string {
 		throw new Error(`Wildcard routes like '${path}' are not supported yet (you can add support!)`)
 	}
 	// react-router supports optional route segments https://reactrouter.com/en/main/route/route#optional-segments
-	// but we don't use them yet so just fail for now until we need them (if ever)
-	if (path.match(/\?\//)) {
+	// but we don't use them yet so just fail for now until we need them (if ever). A trailing
+	// optional param would silently lose its optionality in the Vercel pattern (use two explicit
+	// routes instead), so reject any '?' here, not just mid-path ones.
+	if (path.includes('?')) {
 		throw new Error(
 			`Optional route segments like in '${path}' are not supported yet (you can add this)`
 		)
@@ -91,20 +96,42 @@ function extract(...routes: ReactElement[]) {
 		.sort()
 }
 
-const spaRoutes = router
-	.flatMap(extractContentPaths)
-	.sort()
-	// ignore the root catch-all route
-	.filter((path) => path !== '/*' && path !== '*')
-	.map((path) => ({
-		reactRouterPattern: path,
-		vercelRouterPattern: convertReactToVercel(path),
-	}))
+function getSpaRoutes(routeObjects: RouteObject[]) {
+	return (
+		routeObjects
+			.flatMap(extractContentPaths)
+			.sort()
+			// ignore the root catch-all route
+			.filter((path) => path !== '/*' && path !== '*')
+			.map((path) => ({
+				reactRouterPattern: path,
+				vercelRouterPattern: convertReactToVercel(path),
+			}))
+	)
+}
+
+const spaRoutes = getSpaRoutes(createAppRouter({ includeDevRoutes: false }))
+const devSpaRoutes = getSpaRoutes(createAppRouter({ includeDevRoutes: true }))
 
 const allVercelRouterPatterns = spaRoutes.map((route) => route.vercelRouterPattern)
 
 test('the_routes', () => {
 	expect(spaRoutes).toMatchSnapshot()
+})
+
+test('dev reset route exists only in development routing', () => {
+	expect(devSpaRoutes.map((route) => route.reactRouterPattern)).toContain('/dev/reset-local-state')
+	expect(devSpaRoutes.map((route) => route.reactRouterPattern)).toContain(
+		'/dev/browser-run-thumbnail'
+	)
+	expect(spaRoutes.map((route) => route.reactRouterPattern)).not.toContain('/dev/reset-local-state')
+	expect(spaRoutes.map((route) => route.reactRouterPattern)).not.toContain(
+		'/dev/browser-run-thumbnail'
+	)
+})
+
+test('the thumbnail render route is included in production routing', () => {
+	expect(spaRoutes.map((route) => route.reactRouterPattern)).toContain('/__thumbnail-render')
 })
 
 test('all React routes match', () => {
@@ -134,16 +161,16 @@ test('convertReactToVercel', () => {
 	expect(() =>
 		convertReactToVercel('/r/:roomId/history?/:timestamp')
 	).toThrowErrorMatchingInlineSnapshot(
-		`"Optional route segments like in '/r/:roomId/history?/:timestamp' are not supported yet (you can add this)"`
+		`[Error: Optional route segments like in '/r/:roomId/history?/:timestamp' are not supported yet (you can add this)]`
 	)
 	expect(() => convertReactToVercel('/r/:roomId/history/*')).toThrowErrorMatchingInlineSnapshot(
-		`"Wildcard routes like '/r/:roomId/history/*' are not supported yet (you can add support!)"`
+		`[Error: Wildcard routes like '/r/:roomId/history/*' are not supported yet (you can add support!)]`
 	)
 	expect(() => convertReactToVercel('/r/foo:roomId/history')).toThrowErrorMatchingInlineSnapshot(
-		`"Colons in route segments must be immediately preceded by a slash in '/r/foo:roomId/history'"`
+		`[Error: Colons in route segments must be immediately preceded by a slash in '/r/foo:roomId/history']`
 	)
 	expect(() => convertReactToVercel('r/:roomId/history')).toThrowErrorMatchingInlineSnapshot(
-		`"Route paths must start with a slash, but 'r/:roomId/history' does not"`
+		`[Error: Route paths must start with a slash, but 'r/:roomId/history' does not]`
 	)
 })
 

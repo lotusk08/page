@@ -1,38 +1,47 @@
 import { useValue } from '@tldraw/state-react'
-import React, { useMemo } from 'react'
-import { RIGHT_MOUSE_BUTTON } from '../constants'
+import React, { useEffect, useMemo } from 'react'
+import { tlenv } from '../globals/environment'
 import {
+	elementShouldCaptureKeys,
 	preventDefault,
 	releasePointerCapture,
 	setPointerCapture,
-	stopEventPropagation,
 } from '../utils/dom'
 import { getPointerInfo } from '../utils/getPointerInfo'
+import { getPointerEventButton, isDirectDisplayPen, isSecondaryClickEvent } from '../utils/pointer'
 import { useEditor } from './useEditor'
 
 export function useCanvasEvents() {
 	const editor = useEditor()
+	const ownerDocument = editor.getContainerDocument()
 	const currentTool = useValue('current tool', () => editor.getCurrentTool(), [editor])
 
 	const events = useMemo(
 		function canvasEvents() {
-			// Track the last screen point
-			let lastX: number, lastY: number
+			let isSecondaryClickPointerDown = false
 
 			function onPointerDown(e: React.PointerEvent) {
-				if ((e as any).isKilled) return
+				if (editor.wasEventAlreadyHandled(e)) return
+				const button = getPointerEventButton(e)
+				isSecondaryClickPointerDown = button === 2
 
-				if (e.button === RIGHT_MOUSE_BUTTON) {
+				// With right-click panning disabled, fire right_click on press and let the
+				// native contextmenu through so the menu opens at the pointer-down location.
+				if (button === 2 && !editor.options.rightClickPanning) {
 					editor.dispatch({
 						type: 'pointer',
 						target: 'canvas',
 						name: 'right_click',
-						...getPointerInfo(e),
+						...getPointerInfo(editor, e),
 					})
 					return
 				}
 
-				if (e.button !== 0 && e.button !== 1 && e.button !== 5) return
+				if (button !== 0 && button !== 1 && button !== 2 && button !== 5) return
+
+				// Detect direct-display pen input (Apple Pencil, Surface Pen on a touchscreen) so we
+				// only auto-enable pen mode for it, not for an indirect desktop tablet stylus.
+				const isPenDirect = isDirectDisplayPen(e)
 
 				setPointerCapture(e.currentTarget, e)
 
@@ -40,39 +49,20 @@ export function useCanvasEvents() {
 					type: 'pointer',
 					target: 'canvas',
 					name: 'pointer_down',
-					...getPointerInfo(e),
+					...getPointerInfo(editor, e),
+					isPenDirect,
 				})
 			}
 
-			function onPointerMove(e: React.PointerEvent) {
-				if ((e as any).isKilled) return
-
-				if (e.clientX === lastX && e.clientY === lastY) return
-				lastX = e.clientX
-				lastY = e.clientY
-
-				// For tools that benefit from a higher fidelity of events,
-				// we dispatch the coalesced events.
-				// N.B. Sometimes getCoalescedEvents isn't present on iOS, ugh.
-				const events =
-					currentTool.useCoalescedEvents && e.nativeEvent.getCoalescedEvents
-						? e.nativeEvent.getCoalescedEvents()
-						: [e]
-				for (const singleEvent of events) {
-					editor.dispatch({
-						type: 'pointer',
-						target: 'canvas',
-						name: 'pointer_move',
-						...getPointerInfo(singleEvent),
-					})
-				}
-			}
-
 			function onPointerUp(e: React.PointerEvent) {
-				if ((e as any).isKilled) return
-				if (e.button !== 0 && e.button !== 1 && e.button !== 2 && e.button !== 5) return
-				lastX = e.clientX
-				lastY = e.clientY
+				if (editor.wasEventAlreadyHandled(e)) return
+				const button = isSecondaryClickPointerDown ? 2 : getPointerEventButton(e)
+				if (button !== 0 && button !== 1 && button !== 2 && button !== 5) return
+
+				const rightClickPanning = editor.options.rightClickPanning
+				// Check before dispatch (which resets isPanning)
+				const wasRightClickPanning =
+					rightClickPanning && button === 2 && editor.inputs.getIsPanning()
 
 				releasePointerCapture(e.currentTarget, e)
 
@@ -80,55 +70,85 @@ export function useCanvasEvents() {
 					type: 'pointer',
 					target: 'canvas',
 					name: 'pointer_up',
-					...getPointerInfo(e),
+					...getPointerInfo(editor, e),
+					button,
 				})
+
+				// Static right-click: fire contextmenu at the pointer-up location
+				if (rightClickPanning && button === 2 && !wasRightClickPanning) {
+					const contextMenuEvent = new PointerEvent('contextmenu', {
+						bubbles: true,
+						clientX: e.clientX,
+						clientY: e.clientY,
+						button: 2,
+						buttons: 0,
+						pointerId: e.pointerId,
+						pointerType: e.pointerType,
+						isPrimary: e.isPrimary,
+					})
+					e.currentTarget.dispatchEvent(contextMenuEvent)
+				}
+				isSecondaryClickPointerDown = false
 			}
 
 			function onPointerEnter(e: React.PointerEvent) {
-				if ((e as any).isKilled) return
+				if (editor.wasEventAlreadyHandled(e)) return
 				if (editor.getInstanceState().isPenMode && e.pointerType !== 'pen') return
 				const canHover = e.pointerType === 'mouse' || e.pointerType === 'pen'
 				editor.updateInstanceState({ isHoveringCanvas: canHover ? true : null })
 			}
 
 			function onPointerLeave(e: React.PointerEvent) {
-				if ((e as any).isKilled) return
+				if (editor.wasEventAlreadyHandled(e)) return
 				if (editor.getInstanceState().isPenMode && e.pointerType !== 'pen') return
 				const canHover = e.pointerType === 'mouse' || e.pointerType === 'pen'
 				editor.updateInstanceState({ isHoveringCanvas: canHover ? false : null })
 			}
 
 			function onTouchStart(e: React.TouchEvent) {
-				;(e as any).isKilled = true
+				if (editor.wasEventAlreadyHandled(e)) return
+				editor.markEventAsHandled(e)
 				preventDefault(e)
 			}
 
 			function onTouchEnd(e: React.TouchEvent) {
-				;(e as any).isKilled = true
-				// check that e.target is an HTMLElement
-				if (!(e.target instanceof HTMLElement)) return
+				if (editor.wasEventAlreadyHandled(e)) return
+				editor.markEventAsHandled(e)
+				if (!(e.target instanceof editor.getContainerWindow().HTMLElement)) return
 
+				const editingShapeId = editor.getEditingShapeId()
 				if (
+					// if the target is not inside the editing shape
+					!(editingShapeId && e.target.closest(`[data-shape-id="${editingShapeId}"]`)) &&
+					// and the target is not an clickable element
 					e.target.tagName !== 'A' &&
-					e.target.tagName !== 'TEXTAREA' &&
-					!e.target.isContentEditable &&
-					// When in EditingShape state, we are actually clicking on a 'DIV'
-					// not A/TEXTAREA/contenteditable element yet. So, to preserve cursor position
-					// for edit mode on mobile we need to not preventDefault.
-					// TODO: Find out if we still need this preventDefault in general though.
-					!(editor.getEditingShape() && e.target.className.includes('tl-text-content'))
+					// and the target is not an editable element
+					!elementShouldCaptureKeys(e.target, false)
 				) {
 					preventDefault(e)
 				}
 			}
 
 			function onDragOver(e: React.DragEvent<Element>) {
+				if (editor.wasEventAlreadyHandled(e)) return
 				preventDefault(e)
 			}
 
 			async function onDrop(e: React.DragEvent<Element>) {
+				if (editor.wasEventAlreadyHandled(e)) return
 				preventDefault(e)
-				stopEventPropagation(e)
+				e.stopPropagation()
+
+				const pagePoint = editor.screenToPage({ x: e.clientX, y: e.clientY })
+
+				// Call the custom onDropOnCanvas callback if provided
+				if (editor.options.experimental__onDropOnCanvas) {
+					const handled = editor.options.experimental__onDropOnCanvas({
+						point: pagePoint,
+						event: e,
+					})
+					if (handled) return
+				}
 
 				if (e.dataTransfer?.files?.length) {
 					const files = Array.from(e.dataTransfer.files)
@@ -136,8 +156,7 @@ export function useCanvasEvents() {
 					await editor.putExternalContent({
 						type: 'files',
 						files,
-						point: editor.screenToPage({ x: e.clientX, y: e.clientY }),
-						ignoreParent: false,
+						point: pagePoint,
 					})
 					return
 				}
@@ -147,19 +166,38 @@ export function useCanvasEvents() {
 					await editor.putExternalContent({
 						type: 'url',
 						url,
-						point: editor.screenToPage({ x: e.clientX, y: e.clientY }),
+						point: pagePoint,
 					})
 					return
 				}
 			}
 
 			function onClick(e: React.MouseEvent) {
-				stopEventPropagation(e)
+				if (editor.wasEventAlreadyHandled(e)) return
+				e.stopPropagation()
+			}
+
+			function onContextMenu(e: React.MouseEvent) {
+				// With right-click panning disabled, let the native contextmenu through so the
+				// menu opens on press.
+				if (!editor.options.rightClickPanning) return
+				// Synthetic events — our own dispatch from onPointerUp, or tests using
+				// fireEvent.contextMenu — pass through so Radix can open the menu.
+				if (!e.nativeEvent.isTrusted) return
+				// Only suppress the native browser contextmenu when it follows a
+				// secondary click. For those, our pointer handling has already
+				// decided what to do (either we'll dispatch a synthetic contextmenu on
+				// pointerup to open the menu at the release position, or we panned and
+				// don't want a menu at all).
+				//
+				// Other contextmenu sources must reach Radix so the menu opens:
+				// - long-press on touch devices (button=0, pointerType=touch)
+				if (!isSecondaryClickEvent(e)) return
+				preventDefault(e)
 			}
 
 			return {
 				onPointerDown,
-				onPointerMove,
 				onPointerUp,
 				onPointerEnter,
 				onPointerLeave,
@@ -168,10 +206,54 @@ export function useCanvasEvents() {
 				onTouchStart,
 				onTouchEnd,
 				onClick,
+				onContextMenu,
 			}
 		},
-		[editor, currentTool]
+		[editor]
 	)
+
+	// onPointerMove is special: where we're only interested in the other events when they're
+	// happening _on_ the canvas (as opposed to outside of it, or on UI floating over it), we want
+	// the pointer position to be up to date regardless of whether it's over the tldraw canvas or
+	// not. So instead of returning a listener to be attached to the canvas, we directly attach a
+	// listener to the whole document instead.
+	useEffect(() => {
+		let lastX: number, lastY: number
+
+		function onPointerMove(e: PointerEvent) {
+			if (editor.wasEventAlreadyHandled(e)) return
+			editor.markEventAsHandled(e)
+
+			if (e.clientX === lastX && e.clientY === lastY) return
+			lastX = e.clientX
+			lastY = e.clientY
+
+			// For tools that benefit from a higher fidelity of events,
+			// we dispatch the coalesced events.
+			// N.B. Sometimes getCoalescedEvents isn't present on iOS, ugh.
+			// Specifically, in local mode (non-https) mode, iOS does not `useCoalescedEvents`
+			// so it appears like the ink is working locally, when really it's just that `useCoalescedEvents`
+			// is disabled. The intent here is to have `useCoalescedEvents` disabled for iOS.
+			const events =
+				!tlenv.isIos && currentTool.useCoalescedEvents && e.getCoalescedEvents
+					? e.getCoalescedEvents()
+					: [e]
+
+			for (const singleEvent of events) {
+				editor.dispatch({
+					type: 'pointer',
+					target: 'canvas',
+					name: 'pointer_move',
+					...getPointerInfo(editor, singleEvent),
+				})
+			}
+		}
+
+		ownerDocument.body.addEventListener('pointermove', onPointerMove)
+		return () => {
+			ownerDocument.body.removeEventListener('pointermove', onPointerMove)
+		}
+	}, [editor, currentTool, ownerDocument])
 
 	return events
 }

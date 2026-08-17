@@ -35,6 +35,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 			}
 			return
 		},
+		embedOnPaste: false,
 	},
 	{
 		type: 'figma',
@@ -47,7 +48,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 			if (
 				!!url.match(
 					// eslint-disable-next-line no-useless-escape
-					/https:\/\/([\w\.-]+\.)?figma.com\/(file|proto)\/([0-9a-zA-Z]{22,128})(?:\/.*)?$/
+					/https:\/\/([\w\.-]+\.)?figma.com\/(file|proto|design)\/([0-9a-zA-Z]{22,128})(?:\/.*)?$/
 				) &&
 				!url.includes('figma.com/embed')
 			) {
@@ -65,6 +66,40 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 			}
 			return
 		},
+		embedOnPaste: true,
+	},
+	{
+		type: 'canva',
+		title: 'Canva',
+		hostnames: ['canva.com'],
+		width: 720,
+		height: 500,
+		doesResize: true,
+		toEmbedUrl: (url) => {
+			const urlObj = safeParseUrl(url)
+			if (
+				urlObj &&
+				urlObj.pathname.match(/^\/design\/([^/]+)\/.+/) &&
+				!urlObj.searchParams.has('embed')
+			) {
+				urlObj.searchParams.set('embed', '')
+				return urlObj.href
+			}
+			return
+		},
+		fromEmbedUrl: (url) => {
+			const urlObj = safeParseUrl(url)
+			if (
+				urlObj &&
+				urlObj.pathname.match(/^\/design\/([^/]+)\/.+/) &&
+				urlObj.searchParams.has('embed')
+			) {
+				urlObj.searchParams.delete('embed')
+				return urlObj.href
+			}
+			return
+		},
+		embedOnPaste: true,
 	},
 	{
 		type: 'google_maps',
@@ -76,7 +111,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		overridePermissions: {
 			'allow-presentation': true,
 		},
-		toEmbedUrl: (url) => {
+		toEmbedUrl: (url, config?: GoogleMapsEmbedConfig) => {
 			if (url.includes('/maps/embed?')) {
 				return url
 			} else if (url.includes('/maps/')) {
@@ -91,7 +126,9 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 							? zoomOrMeters
 							: -Math.log2(parseInt(zoomOrMeters) / 14772321) / 0.8
 					const host = new URL(url).host.replace('www.', '')
-					result = `https://${host}/maps/embed/v1/view?key=${process.env.NEXT_PUBLIC_GC_API_KEY}&center=${lat},${lng}&zoom=${z}&maptype=${mapType}`
+					// TODO: remove the process.env fallback once all consumers pass `apiKey` via `embedConfig`.
+					const apiKey = config?.apiKey ?? process.env.NEXT_PUBLIC_GC_API_KEY
+					result = `https://${host}/maps/embed/v1/view?key=${apiKey}&center=${lat},${lng}&zoom=${z}&maptype=${mapType}`
 				} else {
 					result = ''
 				}
@@ -116,6 +153,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 			}
 			return
 		},
+		embedOnPaste: true,
 	},
 	{
 		type: 'val_town',
@@ -144,6 +182,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 			}
 			return
 		},
+		embedOnPaste: true,
 	},
 	{
 		type: 'codesandbox',
@@ -170,6 +209,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 			}
 			return
 		},
+		embedOnPaste: true,
 	},
 	{
 		type: 'codepen',
@@ -198,6 +238,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 			}
 			return
 		},
+		embedOnPaste: true,
 	},
 	{
 		type: 'scratch',
@@ -206,6 +247,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		width: 520,
 		height: 400,
 		doesResize: false,
+		embedOnPaste: true,
 		toEmbedUrl: (url) => {
 			const SCRATCH_URL_REGEXP = /https?:\/\/scratch.mit.edu\/projects\/([^/]+)/
 			const matches = url.match(SCRATCH_URL_REGEXP)
@@ -237,6 +279,10 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 			'allow-popups-to-escape-sandbox': true,
 		},
 		isAspectRatioLocked: true,
+		embedOnPaste: true,
+		// Not opted into `sizeToContentAspectRatio`: YouTube advertises the same 16:9 thumbnail
+		// dimensions for every video (it pads vertical videos into a 16:9 thumbnail), so unfurled
+		// dimensions can never reveal a non-16:9 ratio — the correction would always be a no-op.
 		toEmbedUrl: (url) => {
 			const urlObj = safeParseUrl(url)
 			if (!urlObj) return
@@ -303,6 +349,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		overridePermissions: {
 			'allow-popups-to-escape-sandbox': true,
 		},
+		embedOnPaste: true,
 		toEmbedUrl: (url) => {
 			const urlObj = safeParseUrl(url)
 			const cidQs = urlObj?.searchParams.get('cid')
@@ -347,6 +394,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		overridePermissions: {
 			'allow-popups-to-escape-sandbox': true,
 		},
+		embedOnPaste: true,
 		toEmbedUrl: (url) => {
 			const urlObj = safeParseUrl(url)
 
@@ -381,6 +429,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		width: 720,
 		height: 500,
 		doesResize: true,
+		embedOnPaste: true,
 		// Security warning:
 		// Gists allow adding .json extensions to the URL which return JSONP.
 		// Furthermore, the JSONP can include callbacks that execute arbitrary JavaScript.
@@ -413,10 +462,12 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		width: 720,
 		height: 500,
 		doesResize: true,
+		embedOnPaste: true,
 		toEmbedUrl: (url) => {
 			const urlObj = safeParseUrl(url)
 			if (urlObj && urlObj.pathname.match(/\/@([^/]+)\/([^/]+)/)) {
-				return `${url}?embed=true`
+				urlObj.searchParams.append('embed', 'true')
+				return urlObj.href
 			}
 			return
 		},
@@ -440,6 +491,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		width: 720,
 		height: 500,
 		doesResize: true,
+		embedOnPaste: true,
 		toEmbedUrl: (url) => {
 			const urlObj = safeParseUrl(url)
 			if (urlObj && urlObj.pathname.match(/^\/map\//)) {
@@ -465,6 +517,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		minHeight: 500,
 		overrideOutlineRadius: 12,
 		doesResize: true,
+		embedOnPaste: true,
 		toEmbedUrl: (url) => {
 			const urlObj = safeParseUrl(url)
 			if (urlObj && urlObj.pathname.match(/^\/(artist|album)\//)) {
@@ -488,6 +541,8 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		height: 360,
 		doesResize: true,
 		isAspectRatioLocked: true,
+		embedOnPaste: true,
+		sizeToContentAspectRatio: true,
 		toEmbedUrl: (url) => {
 			const urlObj = safeParseUrl(url)
 			if (urlObj && urlObj.hostname === 'vimeo.com') {
@@ -511,29 +566,6 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		},
 	},
 	{
-		type: 'excalidraw',
-		title: 'Excalidraw',
-		hostnames: ['excalidraw.com'],
-		width: 720,
-		height: 500,
-		doesResize: true,
-		isAspectRatioLocked: true,
-		toEmbedUrl: (url) => {
-			const urlObj = safeParseUrl(url)
-			if (urlObj && urlObj.hash.match(/#room=/)) {
-				return url
-			}
-			return
-		},
-		fromEmbedUrl: (url) => {
-			const urlObj = safeParseUrl(url)
-			if (urlObj && urlObj.hash.match(/#room=/)) {
-				return url
-			}
-			return
-		},
-	},
-	{
 		type: 'observable',
 		title: 'Observable',
 		hostnames: ['observablehq.com'],
@@ -542,6 +574,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		doesResize: true,
 		isAspectRatioLocked: false,
 		backgroundColor: '#fff',
+		embedOnPaste: true,
 		toEmbedUrl: (url) => {
 			const urlObj = safeParseUrl(url)
 			if (urlObj && urlObj.pathname.match(/^\/@([^/]+)\/([^/]+)\/?$/)) {
@@ -573,6 +606,7 @@ export const DEFAULT_EMBED_DEFINITIONS = [
 		width: 700,
 		height: 450,
 		doesResize: true,
+		embedOnPaste: true,
 		toEmbedUrl: (url) => {
 			const urlObj = safeParseUrl(url)
 			if (
@@ -631,7 +665,7 @@ export const embedShapePermissionDefaults = {
 	// [REASON] We want to allow embeds to link back to their original sites (e.g. YouTube).
 	'allow-popups': true,
 	// [MDN] Lets the sandboxed document open new windows without those windows inheriting the sandboxing. For example, this can safely sandbox an advertisement without forcing the same restrictions upon the page the ad links to.
-	// [REASON] We shouldn't allow popups as a embed could pretend to be us by opening a mocked version of tldraw. This is very unobvious when it is performed as an action within our app.
+	// [REASON] We shouldn't allow popups as an embed could pretend to be us by opening a mocked version of tldraw. This is very unobvious when it is performed as an action within our app.
 	'allow-popups-to-escape-sandbox': false,
 	// [MDN] Lets the resource start a presentation session.
 	// [REASON] Prevents embed from navigating away from tldraw and pretending to be us.
@@ -659,8 +693,43 @@ export const embedShapePermissionDefaults = {
 /** @public */
 export type TLEmbedShapePermissions = { [K in keyof typeof embedShapePermissionDefaults]?: boolean }
 
+/**
+ * Overrides for unknown/arbitrary embeds that aren't in the curated embed definitions list.
+ * These restrict the most dangerous sandbox permissions to mitigate:
+ * - Same-origin sandbox escape (allow-scripts + allow-same-origin lets the iframe remove its own sandbox)
+ * - Phishing via embedded forms
+ * - Popup-based social engineering
+ *
+ * @public
+ */
+export const unknownEmbedShapePermissionOverrides: TLEmbedShapePermissions = {
+	'allow-same-origin': false,
+	'allow-forms': false,
+	'allow-popups': false,
+}
+
+/**
+ * Configuration for the default Google Maps embed. Provide an `apiKey` through
+ * {@link EmbedShapeUtil}'s `embedConfig` option to render Google Maps embeds.
+ *
+ * @public
+ */
+export interface GoogleMapsEmbedConfig {
+	readonly apiKey?: string
+}
+
+/**
+ * Per-embed configuration for the default embed definitions, keyed by embed type.
+ * Passed to an embed definition's `toEmbedUrl` when building its embed URL.
+ *
+ * @public
+ */
+export interface DefaultEmbedConfig {
+	readonly google_maps?: GoogleMapsEmbedConfig
+}
+
 /** @public */
-export interface EmbedDefinition {
+export interface EmbedDefinition<Config = never> {
 	readonly type: string
 	readonly title: string
 	readonly hostnames: readonly string[]
@@ -673,21 +742,31 @@ export interface EmbedDefinition {
 	readonly overridePermissions?: TLEmbedShapePermissions
 	readonly instructionLink?: string
 	readonly backgroundColor?: string
+	readonly embedOnPaste?: boolean
+	readonly canEditWhileLocked?: boolean
 	// TODO: FIXME this is ugly be required because some embeds have their own border radius for example spotify embeds
 	readonly overrideOutlineRadius?: number
-	// eslint-disable-next-line @typescript-eslint/method-signature-style
-	readonly toEmbedUrl: (url: string) => string | undefined
-	// eslint-disable-next-line @typescript-eslint/method-signature-style
+	/**
+	 * When true, the embed shape corrects its size after creation to match the real aspect ratio of
+	 * its content, so fixed-aspect media (like video) isn't letterboxed inside the default box. The
+	 * dimensions are resolved from the URL's OpenGraph metadata via the editor's url asset handler
+	 * (the same "unfurl" path used for bookmarks), so it degrades gracefully when no metadata is
+	 * available.
+	 */
+	readonly sizeToContentAspectRatio?: boolean
+	// eslint-disable-next-line tldraw/method-signature-style
+	readonly toEmbedUrl: (url: string, config?: Config) => string | undefined
+	// eslint-disable-next-line tldraw/method-signature-style
 	readonly fromEmbedUrl: (url: string) => string | undefined
 }
 
 /** @public */
-export interface CustomEmbedDefinition extends EmbedDefinition {
+export interface CustomEmbedDefinition<Config = never> extends EmbedDefinition<Config> {
 	readonly icon: string
 }
 
 /** @public */
-export type TLEmbedDefinition = EmbedDefinition | CustomEmbedDefinition
+export type TLEmbedDefinition = EmbedDefinition<any> | CustomEmbedDefinition<any>
 
 /** @public */
 export type DefaultEmbedDefinitionType = (typeof DEFAULT_EMBED_DEFINITIONS)[number]['type']

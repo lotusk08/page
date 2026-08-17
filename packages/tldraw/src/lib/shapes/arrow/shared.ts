@@ -1,7 +1,10 @@
 import {
 	Editor,
 	Geometry2d,
+	intersectLineSegmentPolygon,
 	Mat,
+	MatModel,
+	pointInPolygon,
 	TLArrowBinding,
 	TLArrowBindingProps,
 	TLArrowShape,
@@ -10,12 +13,19 @@ import {
 	Vec,
 } from '@tldraw/editor'
 import { createComputedCache } from '@tldraw/store'
-import { getCurvedArrowInfo } from './curved-arrow'
-import { getStraightArrowInfo } from './straight-arrow'
 
 const MIN_ARROW_BEND = 8
+// Keep anchors off exact edges/corners to avoid degenerate arrow intersections.
+const NORMALIZED_ANCHOR_EPSILON = 1e-3
+
+function clampNormalizedAnchor(anchor: { x: number; y: number }) {
+	const clamp = (v: number) =>
+		Math.max(NORMALIZED_ANCHOR_EPSILON, Math.min(1 - NORMALIZED_ANCHOR_EPSILON, v))
+	return { x: clamp(anchor.x), y: clamp(anchor.y) }
+}
 
 export function getIsArrowStraight(shape: TLArrowShape) {
+	if (shape.props.kind !== 'arc') return false
 	return Math.abs(shape.props.bend) < MIN_ARROW_BEND * shape.props.scale // snap to +-8px
 }
 
@@ -34,16 +44,20 @@ export function getBoundShapeInfoForTerminal(
 	terminalName: 'start' | 'end'
 ): BoundShapeInfo | undefined {
 	const binding = editor
-		.getBindingsFromShape<TLArrowBinding>(arrow, 'arrow')
+		.getBindingsFromShape(arrow, 'arrow')
 		.find((b) => b.props.terminal === terminalName)
 	if (!binding) return
 
 	const boundShape = editor.getShape(binding.toId)!
 	if (!boundShape) return
 	const transform = editor.getShapePageTransform(boundShape)!
+	const hasArrowhead =
+		terminalName === 'start'
+			? arrow.props.arrowheadStart !== 'none'
+			: arrow.props.arrowheadEnd !== 'none'
 	const geometry = editor.getShapeGeometry(
 		boundShape,
-		terminalName === 'start' ? { context: '@tldraw/arrow-start' } : undefined
+		hasArrowhead ? undefined : { context: '@tldraw/arrow-without-arrowhead' }
 	)
 
 	return {
@@ -56,7 +70,7 @@ export function getBoundShapeInfoForTerminal(
 	}
 }
 
-function getArrowTerminalInArrowSpace(
+export function getArrowTerminalInArrowSpace(
 	editor: Editor,
 	arrowPageTransform: Mat,
 	binding: TLArrowBinding,
@@ -72,16 +86,13 @@ function getArrowTerminalInArrowSpace(
 		// the bound shape and transform it to page space, then transform
 		// it to arrow space
 		const { point, size } = editor.getShapeGeometry(boundShape).bounds
-		const shapePoint = Vec.Add(
-			point,
-			Vec.MulV(
-				// if the parent is the bound shape, then it's ALWAYS precise
-				binding.props.isPrecise || forceImprecise
-					? binding.props.normalizedAnchor
-					: { x: 0.5, y: 0.5 },
-				size
-			)
-		)
+		// If the parent is the bound shape, then it's always treated as precise.
+		const shouldUsePreciseAnchor = binding.props.isPrecise || forceImprecise
+		const normalizedAnchor = shouldUsePreciseAnchor
+			? clampNormalizedAnchor(binding.props.normalizedAnchor)
+			: { x: 0.5, y: 0.5 }
+
+		const shapePoint = Vec.Add(point, Vec.MulV(normalizedAnchor, size))
 		const pagePoint = Mat.applyToPoint(editor.getShapePageTransform(boundShape)!, shapePoint)
 		const arrowPoint = Mat.applyToPoint(Mat.Inverse(arrowPageTransform), pagePoint)
 		return arrowPoint
@@ -94,26 +105,26 @@ export interface TLArrowBindings {
 	end: TLArrowBinding | undefined
 }
 
+const arrowBindingsCache = createComputedCache(
+	'arrow bindings',
+	(editor: Editor, arrow: TLArrowShape) => {
+		const bindings = editor.getBindingsFromShape(arrow.id, 'arrow')
+		return {
+			start: bindings.find((b) => b.props.terminal === 'start'),
+			end: bindings.find((b) => b.props.terminal === 'end'),
+		}
+	},
+	{
+		// we only look at the arrow IDs:
+		areRecordsEqual: (a, b) => a.id === b.id,
+		// the records should stay the same:
+		areResultsEqual: (a, b) => a.start === b.start && a.end === b.end,
+	}
+)
+
 /** @public */
 export function getArrowBindings(editor: Editor, shape: TLArrowShape): TLArrowBindings {
-	const bindings = editor.getBindingsFromShape<TLArrowBinding>(shape, 'arrow')
-	return {
-		start: bindings.find((b) => b.props.terminal === 'start'),
-		end: bindings.find((b) => b.props.terminal === 'end'),
-	}
-}
-
-const arrowInfoCache = createComputedCache('arrow info', (editor: Editor, shape: TLArrowShape) => {
-	const bindings = getArrowBindings(editor, shape)
-	return getIsArrowStraight(shape)
-		? getStraightArrowInfo(editor, shape, bindings)
-		: getCurvedArrowInfo(editor, shape, bindings)
-})
-
-/** @public */
-export function getArrowInfo(editor: Editor, shape: TLArrowShape | TLShapeId) {
-	const id = typeof shape === 'string' ? shape : shape.id
-	return arrowInfoCache.get(editor, id)
+	return arrowBindingsCache.get(editor, shape.id)!
 }
 
 /** @public */
@@ -167,7 +178,7 @@ export function createOrUpdateArrowBinding(
 	const targetId = typeof target === 'string' ? target : target.id
 
 	const existingMany = editor
-		.getBindingsFromShape<TLArrowBinding>(arrowId, 'arrow')
+		.getBindingsFromShape(arrowId, 'arrow')
 		.filter((b) => b.props.terminal === props.terminal)
 
 	// if we've somehow ended up with too many bindings, delete the extras
@@ -198,7 +209,7 @@ export function createOrUpdateArrowBinding(
  */
 export function removeArrowBinding(editor: Editor, arrow: TLArrowShape, terminal: 'start' | 'end') {
 	const existing = editor
-		.getBindingsFromShape<TLArrowBinding>(arrow, 'arrow')
+		.getBindingsFromShape(arrow, 'arrow')
 		.filter((b) => b.props.terminal === terminal)
 
 	editor.deleteBindings(existing)
@@ -210,14 +221,6 @@ export const MIN_ARROW_LENGTH = 10
 export const BOUND_ARROW_OFFSET = 10
 /** @internal */
 export const WAY_TOO_BIG_ARROW_BEND_FACTOR = 10
-
-/** @public */
-export const STROKE_SIZES: Record<string, number> = {
-	s: 2,
-	m: 3.5,
-	l: 5,
-	xl: 10,
-}
 
 /**
  * Get the relationships for an arrow that has two bound shape terminals.
@@ -246,4 +249,54 @@ export function getBoundShapeRelationships(
 		if (endBounds.contains(startBounds)) return 'end-contains-start'
 	}
 	return 'safe'
+}
+
+/**
+ * If the arrow terminal point falls outside the bound shape's mask (e.g. when a shape
+ * extends beyond a frame boundary and is clipped), clamp the terminal to the mask boundary.
+ * Uses the binding anchor point (inside the shape/frame) as the ray origin, since the
+ * arrow endpoint may be entirely outside the mask.
+ *
+ * @internal
+ */
+export function clampArrowTerminalToMask(
+	editor: Editor,
+	point: Vec,
+	terminalHandle: Vec,
+	arrowPageTransform: MatModel,
+	targetShapeInfo?: BoundShapeInfo
+) {
+	if (!targetShapeInfo) return
+
+	const mask = editor.getShapeMask(targetShapeInfo.shape.id)
+	if (!mask) return
+
+	const pagePoint = Mat.applyToPoint(arrowPageTransform, point)
+
+	if (pointInPolygon(pagePoint, mask)) return
+
+	// The point is outside the mask (clipped). Cast a ray from the binding
+	// anchor (which is inside the shape, and typically inside the frame) through
+	// the intersection point on the shape boundary to find where it crosses the mask.
+	// We extend the line slightly past the anchor in case the anchor sits exactly
+	// on the mask boundary.
+	const pageAnchor = Mat.applyToPoint(arrowPageTransform, terminalHandle)
+	const direction = Vec.Sub(pageAnchor, pagePoint).uni()
+	const extendedAnchor = Vec.Add(pageAnchor, Vec.Mul(direction, 1))
+	const intersections = intersectLineSegmentPolygon(extendedAnchor, pagePoint, mask)
+	if (!intersections || intersections.length === 0) return
+
+	// Pick the intersection closest to the original point (nearest frame edge to the shape)
+	let closest = intersections[0]
+	let closestDist = Vec.Dist2(closest, pagePoint)
+	for (let i = 1; i < intersections.length; i++) {
+		const dist = Vec.Dist2(intersections[i], pagePoint)
+		if (dist < closestDist) {
+			closest = intersections[i]
+			closestDist = dist
+		}
+	}
+
+	const arrowPoint = Mat.applyToPoint(Mat.Inverse(arrowPageTransform), closest)
+	point.setTo(arrowPoint)
 }

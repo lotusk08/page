@@ -1,37 +1,40 @@
 import { useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { tltime } from 'tldraw'
+import { TldrawUiButton, tltime } from 'tldraw'
 import { routes } from '../../../../routeDefs'
+import { useActiveWorkspaceId } from '../../../hooks/useActiveWorkspaceId'
 import { useApp } from '../../../hooks/useAppState'
-import { useFileSidebarFocusContext } from '../../../providers/FileInputFocusProvider'
 import { useTldrawAppUiEvents } from '../../../utils/app-ui-events'
 import { getIsCoarsePointer } from '../../../utils/getIsCoarsePointer'
 import { useMsg } from '../../../utils/i18n'
 import { toggleMobileSidebar } from '../../../utils/local-session-state'
 import { TlaIcon } from '../../TlaIcon/TlaIcon'
-import styles from '../sidebar.module.css'
 import { messages } from './sidebar-shared'
+import styles from '../sidebar.module.css'
 
-export function TlaSidebarCreateFileButton() {
+export function useHandleSidebarCreateFile() {
 	const app = useApp()
 	const navigate = useNavigate()
 	const trackEvent = useTldrawAppUiEvents()
-	const createTitle = useMsg(messages.create)
+	// Create the file in whichever workspace is currently active (the home
+	// workspace when in Home, otherwise the selected workspace).
+	const activeWorkspaceId = useActiveWorkspaceId()
 
 	const rCanCreate = useRef(true)
 
-	const focusCtx = useFileSidebarFocusContext()
-
-	const handleSidebarCreate = useCallback(async () => {
+	return useCallback(async () => {
 		if (!rCanCreate.current) return
-		const res = await app.createFile()
+		const res = await app.createFile({ workspaceId: activeWorkspaceId })
 		if (res.ok) {
 			const isMobile = getIsCoarsePointer()
 			if (!isMobile) {
-				focusCtx.shouldRenameNextNewFile = true
+				app.sidebarState.update((prev) => ({
+					...prev,
+					renameState: { fileId: res.value.fileId, workspaceId: activeWorkspaceId },
+				}))
 			}
-			const { file } = res.value
-			navigate(routes.tlaFile(file.id))
+			const { fileId } = res.value
+			navigate(routes.tlaFile(fileId))
 			trackEvent('create-file', { source: 'sidebar' })
 			rCanCreate.current = false
 			tltime.setTimeout('can create again', () => (rCanCreate.current = true), 1000)
@@ -39,16 +42,23 @@ export function TlaSidebarCreateFileButton() {
 				toggleMobileSidebar(false)
 			}
 		}
-	}, [app, focusCtx, navigate, trackEvent])
+	}, [app, navigate, trackEvent, activeWorkspaceId])
+}
+
+export function TlaSidebarCreateFileButton() {
+	const createTitle = useMsg(messages.create)
+	const handleSidebarCreate = useHandleSidebarCreateFile()
 
 	return (
-		<button
-			className={styles.create}
+		<TldrawUiButton
+			type="icon"
+			className={styles.sidebarCreateFileButton}
 			onClick={handleSidebarCreate}
 			data-testid="tla-create-file"
+			tooltip={createTitle}
 			title={createTitle}
 		>
-			<TlaIcon icon="edit-strong" />
-		</button>
+			<TlaIcon icon="edit-strong" style={{ left: 1 }} />
+		</TldrawUiButton>
 	)
 }

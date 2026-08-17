@@ -1,14 +1,4 @@
-import {
-	Editor,
-	TLArrowShape,
-	TLDrawShape,
-	TLGroupShape,
-	TLImageShape,
-	TLLineShape,
-	TLTextShape,
-	useEditor,
-	useValue,
-} from '@tldraw/editor'
+import { Editor, useEditor, useValue } from '@tldraw/editor'
 import { getArrowBindings } from '../../shapes/arrow/shared'
 
 function shapesWithUnboundArrows(editor: Editor) {
@@ -19,7 +9,7 @@ function shapesWithUnboundArrows(editor: Editor) {
 
 	return selectedShapes.filter((shape) => {
 		if (!shape) return false
-		if (editor.isShapeOfType<TLArrowShape>(shape, 'arrow')) {
+		if (editor.isShapeOfType(shape, 'arrow')) {
 			const bindings = getArrowBindings(editor, shape)
 			if (bindings.start || bindings.end) return false
 		}
@@ -28,19 +18,19 @@ function shapesWithUnboundArrows(editor: Editor) {
 }
 
 /** @internal */
-export const useThreeStackableItems = () => {
+export function useThreeStackableItems() {
 	const editor = useEditor()
 	return useValue('threeStackableItems', () => shapesWithUnboundArrows(editor).length > 2, [editor])
 }
 
 /** @internal */
-export const useIsInSelectState = () => {
+export function useIsInSelectState() {
 	const editor = useEditor()
 	return useValue('isInSelectState', () => editor.isIn('select'), [editor])
 }
 
 /** @internal */
-export const useAllowGroup = () => {
+export function useAllowGroup() {
 	const editor = useEditor()
 	return useValue(
 		'allow group',
@@ -52,7 +42,7 @@ export const useAllowGroup = () => {
 			if (selectedShapes.length < 2) return false
 
 			for (const shape of selectedShapes) {
-				if (editor.isShapeOfType<TLArrowShape>(shape, 'arrow')) {
+				if (editor.isShapeOfType(shape, 'arrow')) {
 					const bindings = getArrowBindings(editor, shape)
 					if (bindings.start) {
 						// if the other shape is not among the selected shapes...
@@ -75,7 +65,7 @@ export const useAllowGroup = () => {
 }
 
 /** @internal */
-export const useAllowUngroup = () => {
+export function useAllowUngroup() {
 	const editor = useEditor()
 	return useValue(
 		'allowUngroup',
@@ -123,6 +113,7 @@ export function useAnySelectedShapesCount(min?: number, max?: number) {
 
 /**
  * Returns true if the number of UNLOCKED selected shapes is at least min or at most max.
+ * @public
  */
 export function useUnlockedSelectedShapesCount(min?: number, max?: number) {
 	const editor = useEditor()
@@ -162,7 +153,7 @@ export function useShowAutoSizeToggle() {
 			const selectedShapes = editor.getSelectedShapes()
 			return (
 				selectedShapes.length === 1 &&
-				editor.isShapeOfType<TLTextShape>(selectedShapes[0], 'text') &&
+				editor.isShapeOfType(selectedShapes[0], 'text') &&
 				selectedShapes[0].props.autoSize === false
 			)
 		},
@@ -195,11 +186,12 @@ export function useOnlyFlippableShape() {
 			const shape = editor.getOnlySelectedShape()
 			return (
 				shape &&
-				(editor.isShapeOfType<TLGroupShape>(shape, 'group') ||
-					editor.isShapeOfType<TLImageShape>(shape, 'image') ||
-					editor.isShapeOfType<TLArrowShape>(shape, 'arrow') ||
-					editor.isShapeOfType<TLLineShape>(shape, 'line') ||
-					editor.isShapeOfType<TLDrawShape>(shape, 'draw'))
+				(editor.isShapeOfType(shape, 'group') ||
+					editor.isShapeOfType(shape, 'image') ||
+					editor.isShapeOfType(shape, 'arrow') ||
+					editor.isShapeOfType(shape, 'line') ||
+					editor.isShapeOfType(shape, 'draw') ||
+					editor.isShapeOfType(shape, 'geo'))
 			)
 		},
 		[editor]
@@ -216,4 +208,24 @@ export function useCanRedo() {
 export function useCanUndo() {
 	const editor = useEditor()
 	return useValue('useCanUndo', () => editor.getCanUndo(), [editor])
+}
+
+/** Returns true if the current page has at least one shape. */
+export function useHasShapesOnPage() {
+	const editor = useEditor()
+	return useValue('hasShapesOnPage', () => editor.getCurrentPageShapeIds().size > 0, [editor])
+}
+
+/**
+ * Returns true if the user is in the select tool and has at least one shape selected.
+ * This corresponds to the `canApplySelectionAction()` check in actions.tsx.
+ * @public
+ */
+export function useCanApplySelectionAction() {
+	const editor = useEditor()
+	return useValue(
+		'canApplySelectionAction',
+		() => editor.isIn('select') && editor.getSelectedShapeIds().length > 0,
+		[editor]
+	)
 }

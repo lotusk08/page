@@ -1,10 +1,18 @@
-import { A } from '@/components/content/a'
+import shikiRehype from '@shikijs/rehype'
+import { MDXRemote } from 'next-mdx-remote-client/rsc'
+import rehypeAutolinkHeadings from 'rehype-autolink-headings'
+import rehypeSlug from 'rehype-slug-custom-id'
+import remarkGfm from 'remark-gfm'
 import { ApiHeading } from '@/components/content/api-heading'
+import { StarterKitBento } from '@/components/content/bento'
 import { Blockquote } from '@/components/content/blockquote'
 import { Callout } from '@/components/content/callout'
+import { CheckItem } from '@/components/content/check-item'
 import { Code, CodeLinks, FocusLines } from '@/components/content/code'
-import { Embed } from '@/components/content/embed'
+import { Embed, StarterKitEmbed } from '@/components/content/embed'
+import { Feature } from '@/components/content/feature'
 import { Image } from '@/components/content/image'
+import { MaskedArticleImage } from '@/components/content/masked-article-image'
 import { ParametersTable } from '@/components/content/parameters-table'
 import { ParametersTableDescription } from '@/components/content/parameters-table-description'
 import { ParametersTableName } from '@/components/content/parameters-table-name'
@@ -15,13 +23,17 @@ import { ApiMemberTitle } from '@/components/content/title-with-source-link'
 import { Video } from '@/components/content/video'
 import { YouTube } from '@/components/content/youtube'
 import { cn } from '@/utils/cn'
-import shikiRehype from '@shikijs/rehype'
-import { MDXRemote } from 'next-mdx-remote/rsc'
-import rehypeAutolinkHeadings from 'rehype-autolink-headings'
-import rehypeSlug from 'rehype-slug-custom-id'
-import remarkGfm from 'remark-gfm'
+import { TldrawLink } from '../common/tldraw-link'
 
-export function Content({ mdx, type }: { mdx: string; type?: string }) {
+export function Content({
+	mdx,
+	type,
+	className,
+}: {
+	mdx: string
+	type?: string
+	className?: string
+}) {
 	return (
 		<section
 			className={cn(
@@ -35,19 +47,25 @@ export function Content({ mdx, type }: { mdx: string; type?: string }) {
 				'prose-tr:border-t prose-tr:border-white dark:prose-tr:border-zinc-950',
 				'prose-td:border-l first:prose-td:border-l-0 prose-td:border-white dark:prose-td:border-zinc-950 prose-td:py-3 prose-td:px-4',
 				'prose-hr:border-zinc-100 dark:prose-hr:border-zinc-800',
-				'prose-h1:scroll-mt-20 prose-h2:scroll-mt-20 prose-h3:scroll-mt-20 prose-h4:scroll-mt-20 prose-h5:scroll-mt-20'
+				'prose-h1:scroll-mt-20 prose-h2:scroll-mt-20 prose-h3:scroll-mt-20 prose-h4:scroll-mt-20 prose-h5:scroll-mt-20',
+				className
 			)}
 		>
 			<MDXRemote
 				source={mdx}
 				components={{
-					a: A,
+					a: TldrawLink,
 					Embed,
+					StarterKitEmbed,
 					pre: Pre,
 					code: Code,
+					// Markdown images and `<Image />` — both resolve `/…` static URLs via `assetUrl` in `image.tsx`.
 					Image,
 					img: Image,
+					MaskedArticleImage,
 					ApiHeading,
+					StarterKitBento,
+					Feature,
 					Callout,
 					FocusLines,
 					CodeLinks,
@@ -56,6 +74,7 @@ export function Content({ mdx, type }: { mdx: string; type?: string }) {
 					ParametersTableName,
 					ParametersTableRow,
 					ApiMemberTitle,
+					CheckItem,
 					blockquote: Blockquote,
 					Video,
 					YouTube,
@@ -66,7 +85,14 @@ export function Content({ mdx, type }: { mdx: string; type?: string }) {
 						remarkPlugins: [remarkGfm],
 						rehypePlugins: [
 							[rehypeAutolinkHeadings, {}],
-							[rehypeSlug, { enableCustomId: true, maintainCase: true, removeAccents: true }],
+							[
+								rehypeSlug,
+								{
+									enableCustomId: true,
+									maintainCase: true,
+									removeAccents: true,
+								},
+							],
 							[
 								shikiRehype as any,
 								{

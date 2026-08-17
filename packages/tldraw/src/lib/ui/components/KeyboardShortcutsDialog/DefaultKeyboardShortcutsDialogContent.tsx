@@ -12,8 +12,10 @@ export function DefaultKeyboardShortcutsDialogContent() {
 			<TldrawUiMenuGroup label="shortcuts-dialog.tools" id="tools">
 				<TldrawUiMenuActionItem actionId="toggle-tool-lock" />
 				<TldrawUiMenuActionItem actionId="insert-media" />
+				<TldrawUiMenuActionItem actionId="insert-embed" />
 				<TldrawUiMenuToolItem toolId="select" />
 				<TldrawUiMenuToolItem toolId="draw" />
+				<TldrawUiMenuToolItem toolId="highlight" />
 				<TldrawUiMenuToolItem toolId="eraser" />
 				<TldrawUiMenuToolItem toolId="hand" />
 				<TldrawUiMenuToolItem toolId="rectangle" />
@@ -43,17 +45,29 @@ export function DefaultKeyboardShortcutsDialogContent() {
 				<TldrawUiMenuActionItem actionId="redo" />
 				<TldrawUiMenuActionItem actionId="cut" />
 				<TldrawUiMenuActionItem actionId="copy" />
+				<TldrawUiMenuActionItem actionId="copy-as-png" />
+				<TldrawUiMenuActionItem actionId="copy-hovered-styles" />
 				<TldrawUiMenuActionItem actionId="paste" />
 				<TldrawUiMenuActionItem actionId="select-all" />
 				<TldrawUiMenuActionItem actionId="delete" />
 				<TldrawUiMenuActionItem actionId="duplicate" />
+				<TldrawUiMenuActionItem actionId="print" />
 			</TldrawUiMenuGroup>
 			<TldrawUiMenuGroup label="shortcuts-dialog.view" id="view">
+				<TldrawUiMenuActionItem actionId="select-zoom-tool" />
 				<TldrawUiMenuActionItem actionId="zoom-in" />
 				<TldrawUiMenuActionItem actionId="zoom-out" />
 				<TldrawUiMenuActionItem actionId="zoom-to-100" />
 				<TldrawUiMenuActionItem actionId="zoom-to-fit" />
 				<TldrawUiMenuActionItem actionId="zoom-to-selection" />
+				<TldrawUiMenuItem
+					id="zoom-quick"
+					label="action.zoom-quick"
+					kbd="shift+z"
+					onSelect={() => {
+						/* do nothing */
+					}}
+				/>
 			</TldrawUiMenuGroup>
 			<TldrawUiMenuGroup label="shortcuts-dialog.transform" id="transform">
 				<TldrawUiMenuActionItem actionId="bring-to-front" />
@@ -62,6 +76,9 @@ export function DefaultKeyboardShortcutsDialogContent() {
 				<TldrawUiMenuActionItem actionId="send-to-back" />
 				<TldrawUiMenuActionItem actionId="group" />
 				<TldrawUiMenuActionItem actionId="ungroup" />
+				<TldrawUiMenuActionItem actionId="frame-selection" />
+				<TldrawUiMenuActionItem actionId="flatten-to-image" />
+				<TldrawUiMenuActionItem actionId="toggle-lock" />
 				<TldrawUiMenuActionItem actionId="flip-horizontal" />
 				<TldrawUiMenuActionItem actionId="flip-vertical" />
 				<TldrawUiMenuActionItem actionId="align-top" />
@@ -70,6 +87,8 @@ export function DefaultKeyboardShortcutsDialogContent() {
 				<TldrawUiMenuActionItem actionId="align-left" />
 				<TldrawUiMenuActionItem actionId="align-center-horizontal" />
 				<TldrawUiMenuActionItem actionId="align-right" />
+				<TldrawUiMenuActionItem actionId="distribute-horizontal" />
+				<TldrawUiMenuActionItem actionId="distribute-vertical" />
 			</TldrawUiMenuGroup>
 			<TldrawUiMenuGroup label="shortcuts-dialog.text-formatting" id="text">
 				<TldrawUiMenuItem
@@ -123,7 +142,7 @@ export function DefaultKeyboardShortcutsDialogContent() {
 				<TldrawUiMenuItem
 					id="text-header"
 					label="tool.rich-text-header"
-					kbd="cmd+shift+[[1-6]]"
+					kbd="cmd+alt+[[1-6]]"
 					onSelect={() => {
 						/* do nothing */
 					}}
@@ -157,7 +176,15 @@ export function DefaultKeyboardShortcutsDialogContent() {
 				<TldrawUiMenuItem
 					id="a11y-select-next-shape-direction"
 					label="a11y.select-shape-direction"
-					kbd="cmd+↑→↓←"
+					kbd="cmd+[[↑→↓←]]"
+					onSelect={() => {
+						/* do nothing */
+					}}
+				/>
+				<TldrawUiMenuItem
+					id="a11y-select-next-shape-container"
+					label="a11y.enter-leave-container"
+					kbd="cmd+shift+[[↑↓]]"
 					onSelect={() => {
 						/* do nothing */
 					}}
@@ -165,7 +192,23 @@ export function DefaultKeyboardShortcutsDialogContent() {
 				<TldrawUiMenuItem
 					id="a11y-pan-camera"
 					label="a11y.pan-camera"
-					kbd="[[Space]]+↑→↓←"
+					kbd="[[Space]]+[[↑→↓←]]"
+					onSelect={() => {
+						/* do nothing */
+					}}
+				/>
+				<TldrawUiMenuItem
+					id="adjust-shape-styles"
+					label="a11y.adjust-shape-styles"
+					kbd="cmd+[[Enter]]"
+					onSelect={() => {
+						/* do nothing */
+					}}
+				/>
+				<TldrawUiMenuItem
+					id="open-context-menu"
+					label="a11y.open-context-menu"
+					kbd="cmd+shift+[[Enter]]"
 					onSelect={() => {
 						/* do nothing */
 					}}
@@ -173,7 +216,7 @@ export function DefaultKeyboardShortcutsDialogContent() {
 				<TldrawUiMenuItem
 					id="a11y-move-shape"
 					label="a11y.move-shape"
-					kbd="↑→↓←"
+					kbd="[[↑→↓←]]"
 					onSelect={() => {
 						/* do nothing */
 					}}
@@ -181,7 +224,39 @@ export function DefaultKeyboardShortcutsDialogContent() {
 				<TldrawUiMenuItem
 					id="a11y-move-shape-faster"
 					label="a11y.move-shape-faster"
-					kbd="shift+↑→↓←"
+					kbd="shift+[[↑→↓←]]"
+					onSelect={() => {
+						/* do nothing */
+					}}
+				/>
+				<TldrawUiMenuItem
+					id="a11y-rotate-shape-cw"
+					label="a11y.rotate-shape-cw"
+					kbd="shift+﹥"
+					onSelect={() => {
+						/* do nothing */
+					}}
+				/>
+				<TldrawUiMenuItem
+					id="a11y-rotate-shape-cw-fine"
+					label="a11y.rotate-shape-cw-fine"
+					kbd="shift+alt+﹥"
+					onSelect={() => {
+						/* do nothing */
+					}}
+				/>
+				<TldrawUiMenuItem
+					id="a11y-rotate-shape-ccw"
+					label="a11y.rotate-shape-ccw"
+					kbd="shift+﹤"
+					onSelect={() => {
+						/* do nothing */
+					}}
+				/>
+				<TldrawUiMenuItem
+					id="a11y-rotate-shape-ccw-fine"
+					label="a11y.rotate-shape-ccw-fine"
+					kbd="shift+alt+﹤"
 					onSelect={() => {
 						/* do nothing */
 					}}
@@ -189,6 +264,14 @@ export function DefaultKeyboardShortcutsDialogContent() {
 				<TldrawUiMenuActionItem actionId="enlarge-shapes" />
 				<TldrawUiMenuActionItem actionId="shrink-shapes" />
 				<TldrawUiMenuActionItem actionId="a11y-repeat-shape-announce" />
+				<TldrawUiMenuItem
+					id="a11y-open-keyboard-shortcuts"
+					label="a11y.open-keyboard-shortcuts"
+					kbd="cmd+alt+/"
+					onSelect={() => {
+						/* do nothing */
+					}}
+				/>
 			</TldrawUiMenuGroup>
 			{showCollaborationUi && (
 				<TldrawUiMenuGroup label="shortcuts-dialog.collaboration" id="collaboration">

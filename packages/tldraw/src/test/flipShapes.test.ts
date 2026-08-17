@@ -10,12 +10,13 @@ import {
 	createBindingId,
 	createShapeId,
 } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { getArrowBindings } from '../lib/shapes/arrow/shared'
 import { TestEditor } from './TestEditor'
 
 let editor: TestEditor
 
-jest.useFakeTimers()
+vi.useFakeTimers()
 
 const ids = {
 	boxA: createShapeId('boxA'),
@@ -288,16 +289,21 @@ describe('When multiple shapes are selected', () => {
 })
 
 describe('When one shape is selected', () => {
-	it('Does nothing if the shape is not a group', () => {
+	it('Keeps position but toggles the flip prop if the shape is not a group', () => {
 		const before = editor.getShape(ids.boxA)!
 		editor.select(ids.boxA)
 		editor.flipShapes(editor.getSelectedShapeIds(), 'horizontal')
 
-		expect(editor.getShape(ids.boxA)).toMatchObject(before)
+		// A lone geo shape stays in place, but records the flip on its flipX prop (like the image
+		// shape) so directional geometry mirrors even when the bounds are unchanged.
+		expect(editor.getShape(ids.boxA)).toMatchObject({
+			...before,
+			props: { ...before.props, flipX: true },
+		})
 	})
 
 	it('Flips the direct child shape positions if the shape is a group', async () => {
-		const fn = jest.fn()
+		const fn = vi.fn()
 
 		editor.selectAll()
 		editor.groupShapes(editor.getSelectedShapeIds()) // this will also select the new group
@@ -306,7 +312,7 @@ describe('When one shape is selected', () => {
 		editor.flipShapes(editor.getSelectedShapeIds(), 'horizontal')
 
 		// The change event should have been called
-		jest.runOnlyPendingTimers()
+		vi.runOnlyPendingTimers()
 		expect(fn).toHaveBeenCalled()
 
 		editor.expectShapeToMatch(
@@ -635,4 +641,37 @@ it('Updates the image shape flip properties when flipped', () => {
 	expect(editor.getLastCreatedShape<TLImageShape>().props.flipX).toBe(true)
 	editor.flipShapes(editor.getSelectedShapeIds(), 'vertical')
 	expect(editor.getLastCreatedShape<TLImageShape>().props.flipY).toBe(true)
+})
+
+it('Restores flipped shape positions when shape is rotated', () => {
+	editor.selectAll().rotateSelection(PI / 2.5)
+	const before = editor.getSelectedShapes()
+	editor.flipShapes(editor.getSelectedShapeIds(), 'horizontal')
+	editor.flipShapes(editor.getSelectedShapeIds(), 'horizontal')
+	const after = editor.getSelectedShapes()
+	expect(after.length).toBe(before.length)
+	for (let i = 0; i < before.length; i++) {
+		expect(after[i]).toCloselyMatchObject(before[i])
+	}
+})
+
+it('Restores flipped shape positions with draw shapes when shape is rotated', () => {
+	editor
+		.cancel()
+		.setCurrentTool('draw')
+		.pointerDown(0, 0)
+		.pointerMove(-100, -100)
+		.pointerMove(0, -100)
+		.pointerMove(100, 100)
+		.pointerUp()
+
+	editor.selectAll().rotateSelection(PI / 2.5)
+	const before = editor.getSelectedShapes()
+	editor.flipShapes(editor.getSelectedShapeIds(), 'horizontal')
+	editor.flipShapes(editor.getSelectedShapeIds(), 'horizontal')
+	const after = editor.getSelectedShapes()
+	expect(after.length).toBe(before.length)
+	for (let i = 0; i < before.length; i++) {
+		expect(after[i]).toCloselyMatchObject(before[i])
+	}
 })

@@ -1,5 +1,5 @@
 import React, { createContext } from 'react'
-import { Editor } from '../editor/Editor'
+import type { Editor } from '../editor/Editor'
 import { IdProvider } from './useSafeId'
 
 /** @public */
@@ -21,13 +21,14 @@ export function useMaybeEditor(): Editor | null {
 	return React.useContext(EditorContext)
 }
 
-export function EditorProvider({
-	editor,
-	children,
-}: {
+/** @public */
+export interface EditorProviderProps {
 	editor: Editor
 	children: React.ReactNode
-}) {
+}
+
+/** @public @react */
+export function EditorProvider({ editor, children }: EditorProviderProps) {
 	return (
 		<EditorContext.Provider value={editor}>
 			<IdProvider>{children}</IdProvider>

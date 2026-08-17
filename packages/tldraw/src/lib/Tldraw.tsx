@@ -7,6 +7,7 @@ import {
 	TldrawEditor,
 	TldrawEditorBaseProps,
 	TldrawEditorStoreProps,
+	defaultUserPreferences,
 	mergeArraysAndReplaceDefaults,
 	useEditor,
 	useEditorComponents,
@@ -14,31 +15,37 @@ import {
 	useShallowArrayIdentity,
 	useShallowObjectIdentity,
 } from '@tldraw/editor'
+import { TLAnyAssetUtilConstructor } from '@tldraw/editor'
 import { useMemo } from 'react'
-import { TldrawHandles } from './canvas/TldrawHandles'
-import { TldrawScribble } from './canvas/TldrawScribble'
-import { TldrawSelectionBackground } from './canvas/TldrawSelectionBackground'
-import { TldrawSelectionForeground } from './canvas/TldrawSelectionForeground'
-import { TldrawShapeIndicators } from './canvas/TldrawShapeIndicators'
+import { ImageAssetUtil } from './assets/ImageAssetUtil'
+import { VideoAssetUtil } from './assets/VideoAssetUtil'
+import { defaultAssetUtils } from './defaultAssetUtils'
 import { defaultBindingUtils } from './defaultBindingUtils'
 import { TLEmbedDefinition } from './defaultEmbedDefinitions'
 import {
 	TLExternalContentProps,
 	registerDefaultExternalContentHandlers,
 } from './defaultExternalContentHandlers'
+import { defaultOverlayUtils } from './defaultOverlayUtils'
 import { defaultShapeTools } from './defaultShapeTools'
 import { defaultShapeUtils } from './defaultShapeUtils'
 import { registerDefaultSideEffects } from './defaultSideEffects'
 import { defaultTools } from './defaultTools'
 import { EmbedShapeUtil } from './shapes/embed/EmbedShapeUtil'
 import { allDefaultFontFaces } from './shapes/shared/defaultFonts'
-import { TldrawUi, TldrawUiProps } from './ui/TldrawUi'
-import { TLUiAssetUrlOverrides } from './ui/assetUrls'
+import { TLUiAssetUrlOverrides, useDefaultUiAssetUrlsWithOverrides } from './ui/assetUrls'
 import { LoadingScreen } from './ui/components/LoadingScreen'
 import { Spinner } from './ui/components/Spinner'
+import { AssetUrlsProvider } from './ui/context/asset-urls'
 import { TLUiComponents, useTldrawUiComponents } from './ui/context/components'
+import { useUiEvents } from './ui/context/events'
 import { useToasts } from './ui/context/toasts'
-import { useTranslation } from './ui/hooks/useTranslation/useTranslation'
+import {
+	TldrawUiTranslationProvider,
+	useTranslation,
+} from './ui/hooks/useTranslation/useTranslation'
+import { useMergedTranslationOverrides } from './ui/overrides'
+import { TldrawUi, TldrawUiInFrontOfTheCanvas, TldrawUiProps } from './ui/TldrawUi'
 import { useDefaultEditorAssetsWithOverrides } from './utils/static-assets/assetUrls'
 import { defaultAddFontsFromNode, tipTapDefaultExtensions } from './utils/text/richText'
 
@@ -66,18 +73,77 @@ export interface TLComponents extends TLEditorComponents, TLUiComponents {}
 
 /** @public */
 export interface TldrawBaseProps
-	extends TldrawUiProps,
-		TldrawEditorBaseProps,
-		TLExternalContentProps {
+	extends TldrawUiProps, TldrawEditorBaseProps, TLExternalContentProps {
+	/** Urls for custom assets.
+	 *
+	 * ⚠︎ Important! This must be memoized (with useMemo) or defined outside of any React component.
+	 */
 	assetUrls?: TLUiAssetUrlOverrides
+	/** Overrides for tldraw's components.
+	 *
+	 * ⚠︎ Important! This must be memoized (with useMemo) or defined outside of any React component.
+	 */
 	components?: TLComponents
+	/** Custom definitions for tldraw's embeds.
+	 *
+	 * ⚠︎ Important! This must be memoized (with useMemo) or defined outside of any React component.
+	 *
+	 * @deprecated Use `EmbedShapeUtil.configure({ embedDefinitions: embeds })` instead.
+	 */
 	embeds?: TLEmbedDefinition[]
+	/**
+	 * Text options for the editor.
+	 *
+	 * @deprecated Use `options.text` instead. This prop will be removed in a future release.
+	 */
+	textOptions?: TLTextOptions
+	/**
+	 * The locale to use for the editor's UI. When set, this takes priority over
+	 * both the browser's language preferences (`navigator.languages`) and the
+	 * user's locale preference (e.g. via
+	 * `editor.user.updateUserPreferences({ locale: '...' })`), giving the
+	 * application explicit control over the displayed language.
+	 *
+	 * @example
+	 * ```tsx
+	 * <Tldraw locale="fr" />
+	 * ```
+	 */
+	locale?: string
 }
 
 /** @public */
 export type TldrawProps = TldrawBaseProps & TldrawEditorStoreProps
 
 const allDefaultTools = [...defaultTools, ...defaultShapeTools]
+
+function configureDefaultAssetUtils(
+	assetUtils: readonly TLAnyAssetUtilConstructor[],
+	overrides: Pick<
+		TLExternalContentProps,
+		'maxImageDimension' | 'acceptedImageMimeTypes' | 'acceptedVideoMimeTypes'
+	>
+): readonly TLAnyAssetUtilConstructor[] {
+	const { maxImageDimension, acceptedImageMimeTypes, acceptedVideoMimeTypes } = overrides
+	const needsImageConfig = maxImageDimension !== undefined || acceptedImageMimeTypes !== undefined
+	const needsVideoConfig = acceptedVideoMimeTypes !== undefined
+	if (!needsImageConfig && !needsVideoConfig) return assetUtils
+
+	return assetUtils.map((util) => {
+		if (needsImageConfig && util.type === 'image') {
+			return (util as typeof ImageAssetUtil).configure({
+				...(maxImageDimension !== undefined && { maxDimension: maxImageDimension }),
+				...(acceptedImageMimeTypes !== undefined && { supportedMimeTypes: acceptedImageMimeTypes }),
+			})
+		}
+		if (needsVideoConfig && util.type === 'video') {
+			return (util as typeof VideoAssetUtil).configure({
+				...(acceptedVideoMimeTypes !== undefined && { supportedMimeTypes: acceptedVideoMimeTypes }),
+			})
+		}
+		return util
+	})
+}
 
 /** @public @react */
 export function Tldraw(props: TldrawProps) {
@@ -91,26 +157,42 @@ export function Tldraw(props: TldrawProps) {
 		components = {},
 		shapeUtils = [],
 		bindingUtils = [],
+		assetUtils = [],
+		overlayUtils = [],
 		tools = [],
+		// needs to be here for backwards compatibility
+		// eslint-disable-next-line @typescript-eslint/no-deprecated
 		embeds,
-		textOptions,
+		options,
+		locale,
+		// needs to be here for backwards compatibility with TldrawEditor
+		// eslint-disable-next-line @typescript-eslint/no-deprecated
+		textOptions: _textOptions,
 		...rest
 	} = props
 
 	const _components = useShallowObjectIdentity(components)
+
+	const CustomInFrontOfTheCanvas = components?.InFrontOfTheCanvas
+	const InFrontOfTheCanvas = useMemo(() => {
+		if (rest.hideUi) return CustomInFrontOfTheCanvas ?? null
+		if (!CustomInFrontOfTheCanvas) return TldrawUiInFrontOfTheCanvas
+
+		return () => (
+			<>
+				<TldrawUiInFrontOfTheCanvas />
+				<CustomInFrontOfTheCanvas />
+			</>
+		)
+	}, [rest.hideUi, CustomInFrontOfTheCanvas])
 	const componentsWithDefault = useMemo(
 		() => ({
-			Scribble: TldrawScribble,
-			ShapeIndicators: TldrawShapeIndicators,
-			CollaboratorScribble: TldrawScribble,
-			SelectionForeground: TldrawSelectionForeground,
-			SelectionBackground: TldrawSelectionBackground,
-			Handles: TldrawHandles,
 			Spinner,
 			LoadingScreen,
 			..._components,
+			InFrontOfTheCanvas,
 		}),
-		[_components]
+		[_components, InFrontOfTheCanvas]
 	)
 
 	const _shapeUtils = useShallowArrayIdentity(shapeUtils)
@@ -125,9 +207,25 @@ export function Tldraw(props: TldrawProps) {
 		[_bindingUtils]
 	)
 
+	const _assetUtils = useShallowArrayIdentity(assetUtils)
+	const assetUtilsWithDefaults = useMemo(
+		() =>
+			configureDefaultAssetUtils(
+				mergeArraysAndReplaceDefaults('type', _assetUtils, defaultAssetUtils),
+				{ maxImageDimension, acceptedImageMimeTypes, acceptedVideoMimeTypes }
+			),
+		[_assetUtils, maxImageDimension, acceptedImageMimeTypes, acceptedVideoMimeTypes]
+	)
+
+	const _overlayUtils = useShallowArrayIdentity(overlayUtils)
+	const overlayUtilsWithDefaults = useMemo(
+		() => mergeArraysAndReplaceDefaults('type', _overlayUtils, defaultOverlayUtils),
+		[_overlayUtils]
+	)
+
 	const _tools = useShallowArrayIdentity(tools)
 	const toolsWithDefaults = useMemo(
-		() => mergeArraysAndReplaceDefaults('id', allDefaultTools, _tools),
+		() => mergeArraysAndReplaceDefaults('id', _tools, allDefaultTools),
 		[_tools]
 	)
 
@@ -138,16 +236,27 @@ export function Tldraw(props: TldrawProps) {
 		acceptedVideoMimeTypes ?? DEFAULT_SUPPORT_VIDEO_TYPES
 	)
 
+	// Merge deprecated textOptions prop with options.textOptions
+	// options.textOptions takes precedence over the deprecated textOptions prop
+	const _mergedTextOptions = options?.text ?? _textOptions
 	const textOptionsWithDefaults = useMemo((): TLTextOptions => {
 		return {
 			addFontsFromNode: defaultAddFontsFromNode,
-			...textOptions,
+			..._mergedTextOptions,
 			tipTapConfig: {
 				extensions: tipTapDefaultExtensions,
-				...textOptions?.tipTapConfig,
+				..._mergedTextOptions?.tipTapConfig,
 			},
 		}
-	}, [textOptions])
+	}, [_mergedTextOptions])
+
+	const optionsWithDefaults = useMemo(
+		() => ({
+			...options,
+			text: textOptionsWithDefaults,
+		}),
+		[options, textOptionsWithDefaults]
+	)
 
 	const mediaMimeTypes = useMemo(
 		() => [..._imageMimeTypes, ..._videoMimeTypes],
@@ -158,31 +267,45 @@ export function Tldraw(props: TldrawProps) {
 
 	const embedShapeUtil = shapeUtilsWithDefaults.find((util) => util.type === 'embed')
 	if (embedShapeUtil && embeds) {
+		// eslint-disable-next-line @typescript-eslint/no-deprecated
 		EmbedShapeUtil.setEmbedDefinitions(embeds)
 	}
 
 	return (
-		<TldrawEditor
-			initialState="select"
-			{...rest}
-			components={componentsWithDefault}
-			shapeUtils={shapeUtilsWithDefaults}
-			bindingUtils={bindingUtilsWithDefaults}
-			tools={toolsWithDefaults}
-			textOptions={textOptionsWithDefaults}
-			assetUrls={assets}
-		>
-			<TldrawUi {...rest} components={componentsWithDefault} mediaMimeTypes={mediaMimeTypes}>
-				<InsideOfEditorAndUiContext
-					maxImageDimension={maxImageDimension}
-					maxAssetSize={maxAssetSize}
-					acceptedImageMimeTypes={_imageMimeTypes}
-					acceptedVideoMimeTypes={_videoMimeTypes}
-					onMount={onMount}
-				/>
-				{children}
-			</TldrawUi>
-		</TldrawEditor>
+		// We provide an extra higher layer of asset+translations providers here so that
+		// loading UI (which is rendered outside of TldrawUi) may be translated.
+		// Ideally we would refactor to hoist all the UI context providers we can up here. Maybe later.
+		<AssetUrlsProvider assetUrls={useDefaultUiAssetUrlsWithOverrides(rest.assetUrls)}>
+			<TldrawUiTranslationProvider
+				overrides={useMergedTranslationOverrides(rest.overrides)}
+				// If the locale prop is provided, then use that and assume it to be controlled
+				locale={locale ?? rest.user?.userPreferences.get().locale ?? defaultUserPreferences.locale}
+			>
+				<TldrawEditor
+					initialState="select"
+					{...rest}
+					components={componentsWithDefault}
+					shapeUtils={shapeUtilsWithDefaults}
+					bindingUtils={bindingUtilsWithDefaults}
+					assetUtils={assetUtilsWithDefaults}
+					overlayUtils={overlayUtilsWithDefaults}
+					tools={toolsWithDefaults}
+					options={optionsWithDefaults}
+					assetUrls={assets}
+				>
+					<TldrawUi {...rest} components={componentsWithDefault} mediaMimeTypes={mediaMimeTypes}>
+						<InsideOfEditorAndUiContext
+							maxImageDimension={maxImageDimension}
+							maxAssetSize={maxAssetSize}
+							acceptedImageMimeTypes={_imageMimeTypes}
+							acceptedVideoMimeTypes={_videoMimeTypes}
+							onMount={onMount}
+						/>
+						{children}
+					</TldrawUi>
+				</TldrawEditor>
+			</TldrawUiTranslationProvider>
+		</AssetUrlsProvider>
 	)
 }
 
@@ -199,6 +322,7 @@ function InsideOfEditorAndUiContext({
 	const editor = useEditor()
 	const toasts = useToasts()
 	const msg = useTranslation()
+	const trackEvent = useUiEvents()
 
 	useOnMount(() => {
 		const unsubs: (void | (() => void) | undefined)[] = []
@@ -210,6 +334,19 @@ function InsideOfEditorAndUiContext({
 		// won't be directly used, but mean that when adding text the user can switch between fonts
 		// quickly, without having to wait for them to load in.
 		editor.fonts.requestFonts(allDefaultFontFaces)
+
+		// Also preload any custom font faces defined in themes
+		const themes = editor.getThemes()
+		for (const theme of Object.values(themes)) {
+			for (const key of Object.keys(theme.fonts)) {
+				const font = theme.fonts[key as keyof typeof theme.fonts]
+				if (font.faces?.length) {
+					editor.fonts.requestFonts(font.faces)
+				}
+			}
+		}
+
+		editor.once('edit', () => trackEvent('edit', { source: 'unknown' }))
 
 		// for content handling, first we register the default handlers...
 		registerDefaultExternalContentHandlers(editor, {

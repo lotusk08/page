@@ -1,11 +1,11 @@
-import { isEqual } from 'lodash'
-import * as vscode from 'vscode'
-import { TLDrawDocument } from './TldrawDocument'
-import { loadFile } from './file'
-
+import isEqual from 'lodash/isEqual'
 import { UnknownRecord } from 'tldraw'
+import * as vscode from 'vscode'
 // @ts-ignore
 import type { VscodeMessage } from '../../messages'
+import { loadFile } from './file'
+import { getMimeTypeFromPath } from './media'
+import { TLDrawDocument } from './TldrawDocument'
 import { unfurl } from './unfurl'
 import { nicelog } from './utils'
 
@@ -28,7 +28,7 @@ export class WebViewMessageHandler {
 
 	isLoaded = false
 
-	// eslint-disable-next-line local/prefer-class-methods
+	// eslint-disable-next-line tldraw/prefer-class-methods
 	handle = async (e: VscodeMessage) => {
 		if (!this.document) return
 
@@ -70,6 +70,31 @@ export class WebViewMessageHandler {
 				await this.document.loadBlankDocument()
 				vscode.commands.executeCommand('workbench.action.reloadWindow')
 				break
+			}
+			case 'vscode:get-file/request': {
+				try {
+					const url = e.data.url
+					const fileUri = vscode.Uri.parse(url)
+					const fileData = await vscode.workspace.fs.readFile(fileUri)
+					const mimeType = getMimeTypeFromPath(fileUri.path)
+
+					this.webviewPanel.webview.postMessage({
+						type: 'vscode:get-file/response',
+						uuid: e.uuid + '_response',
+						data: {
+							fileName: fileUri.path.split('/').pop(),
+							file: Array.from(fileData),
+							mimeType,
+						},
+					})
+				} catch (error: any) {
+					this.webviewPanel.webview.postMessage({
+						type: 'vscode:get-file/error',
+						data: {
+							error: error.toString(),
+						},
+					})
+				}
 			}
 			case 'vscode:bookmark/request': {
 				const url = e.data.url

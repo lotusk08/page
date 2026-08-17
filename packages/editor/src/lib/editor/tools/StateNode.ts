@@ -17,20 +17,6 @@ import {
 	TLWheelEventInfo,
 } from '../types/event-types'
 
-const STATE_NODES_TO_MEASURE = [
-	'brushing',
-	'cropping',
-	'dragging',
-	'dragging_handle',
-	'drawing',
-	'erasing',
-	'lasering',
-	'resizing',
-	'rotating',
-	'scribble_brushing',
-	'translating',
-]
-
 /** @public */
 export interface TLStateNodeConstructor {
 	new (editor: Editor, parent?: StateNode): StateNode
@@ -39,6 +25,7 @@ export interface TLStateNodeConstructor {
 	children?(): TLStateNodeConstructor[]
 	isLockable: boolean
 	useCoalescedEvents: boolean
+	trackPerformance: boolean
 }
 
 /** @public */
@@ -62,7 +49,7 @@ export abstract class StateNode implements Partial<TLEventHandlers> {
 
 		this.parent = parent ?? ({} as any)
 
-		if (this.parent) {
+		if (parent) {
 			if (children && initial) {
 				this.type = 'branch'
 				this.initial = initial
@@ -94,6 +81,8 @@ export abstract class StateNode implements Partial<TLEventHandlers> {
 	static children?: () => TLStateNodeConstructor[]
 	static isLockable = true
 	static useCoalescedEvents = false
+	/** Set to `true` in subclasses to emit interaction-start/end performance events when this state is entered/exited. */
+	static trackPerformance = false
 
 	id: string
 	type: 'branch' | 'leaf' | 'root'
@@ -191,8 +180,12 @@ export abstract class StateNode implements Partial<TLEventHandlers> {
 
 	// todo: move this logic into transition
 	enter(info: any, from: string) {
-		if (debugFlags.measurePerformance.get() && STATE_NODES_TO_MEASURE.includes(this.id)) {
-			this.performanceTracker.start(this.id)
+		const track = (this.constructor as TLStateNodeConstructor).trackPerformance
+		if (track) {
+			if (debugFlags.measurePerformance.get()) {
+				this.performanceTracker.start(this.id)
+			}
+			this.editor.performance._notifyInteractionStart(this.id, this.getPath())
 		}
 
 		this._isActive.set(true)
@@ -206,15 +199,20 @@ export abstract class StateNode implements Partial<TLEventHandlers> {
 	}
 
 	// todo: move this logic into transition
-	exit(info: any, from: string) {
-		if (debugFlags.measurePerformance.get() && this.performanceTracker.isStarted()) {
-			this.performanceTracker.stop()
+	exit(info: any, to: string) {
+		const track = (this.constructor as TLStateNodeConstructor).trackPerformance
+		if (track) {
+			if (debugFlags.measurePerformance.get() && this.performanceTracker.isStarted()) {
+				this.performanceTracker.stop()
+			}
+			this.editor.performance._notifyInteractionEnd()
 		}
+
 		this._isActive.set(false)
-		this.onExit?.(info, from)
+		this.onExit?.(info, to)
 
 		if (!this.getIsActive()) {
-			this.getCurrent()?.exit(info, from)
+			this.getCurrent()?.exit(info, to)
 		}
 	}
 
@@ -238,14 +236,38 @@ export abstract class StateNode implements Partial<TLEventHandlers> {
 		this._currentToolIdMask.set(id)
 	}
 
+	/**
+	 * Add a child node to this state node.
+	 *
+	 * @public
+	 */
+	addChild(childConstructor: TLStateNodeConstructor): this {
+		if (this.type === 'leaf') {
+			throw new Error('StateNode.addChild: cannot add child to a leaf node')
+		}
+
+		// Initialize children if it's undefined (for root nodes without static children)
+		if (!this.children) {
+			this.children = {}
+		}
+
+		const child = new childConstructor(this.editor, this)
+
+		// Check if a child with this ID already exists
+		if (this.children[child.id]) {
+			throw new Error(`StateNode.addChild: a child with id '${child.id}' already exists`)
+		}
+
+		this.children[child.id] = child
+		return this
+	}
+
 	onWheel?(info: TLWheelEventInfo): void
 	onPointerDown?(info: TLPointerEventInfo): void
 	onPointerMove?(info: TLPointerEventInfo): void
 	onLongPress?(info: TLPointerEventInfo): void
 	onPointerUp?(info: TLPointerEventInfo): void
 	onDoubleClick?(info: TLClickEventInfo): void
-	onTripleClick?(info: TLClickEventInfo): void
-	onQuadrupleClick?(info: TLClickEventInfo): void
 	onRightClick?(info: TLPointerEventInfo): void
 	onMiddleClick?(info: TLPointerEventInfo): void
 	onKeyDown?(info: TLKeyboardEventInfo): void

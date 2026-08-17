@@ -46,14 +46,14 @@ export const CursorChatBubble = track(function CursorChatBubble() {
 	return chatMessage.trim() ? <NotEditingChatMessage chatMessage={chatMessage} /> : null
 })
 
-function usePositionBubble(ref: RefObject<HTMLInputElement>) {
+function usePositionBubble(ref: RefObject<HTMLInputElement | null>) {
 	const editor = useEditor()
 
 	useLayoutEffect(() => {
 		const elm = ref.current
 		if (!elm) return
 
-		const { x, y } = editor.inputs.currentScreenPoint
+		const { x, y } = editor.inputs.getCurrentScreenPoint()
 		ref.current?.style.setProperty('transform', `translate(${x}px, ${y}px)`)
 
 		// Positioning the chat bubble
@@ -65,10 +65,11 @@ function usePositionBubble(ref: RefObject<HTMLInputElement>) {
 			)
 		}
 
-		window.addEventListener('pointermove', positionChatBubble)
+		const win = editor.getContainerWindow()
+		win.addEventListener('pointermove', positionChatBubble)
 
 		return () => {
-			window.removeEventListener('pointermove', positionChatBubble)
+			win.removeEventListener('pointermove', positionChatBubble)
 		}
 	}, [ref, editor])
 }
@@ -112,7 +113,7 @@ const CursorChatInput = track(function CursorChatInput({
 		if (!elm) return
 
 		const textMeasurement = editor.textMeasure.measureText(value || placeholder, {
-			fontFamily: 'var(--font-body)',
+			fontFamily: 'inherit',
 			fontSize: 12,
 			fontWeight: '500',
 			fontStyle: 'normal',

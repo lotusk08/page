@@ -1,15 +1,17 @@
-import classNames from 'classnames'
+import { TldrawUiButton } from 'tldraw'
 import { useMsg } from '../../../utils/i18n'
 import { TlaFileMenu } from '../../TlaFileMenu/TlaFileMenu'
 import { TlaIcon } from '../../TlaIcon/TlaIcon'
-import styles from '../sidebar.module.css'
 import { messages } from './sidebar-shared'
+import styles from '../sidebar.module.css'
 
 export function TlaSidebarFileLinkMenu({
 	fileId,
+	workspaceId,
 	onRenameAction,
 }: {
 	fileId: string
+	workspaceId: string | null
 	onRenameAction(): void
 }) {
 	const fileMenuLbl = useMsg(messages.fileMenu)
@@ -17,15 +19,18 @@ export function TlaSidebarFileLinkMenu({
 	return (
 		<TlaFileMenu
 			fileId={fileId}
+			workspaceId={workspaceId}
 			source="sidebar"
 			onRenameAction={onRenameAction}
 			trigger={
-				<button
-					className={classNames('tla-sidebar-file-menu', styles.linkMenu)}
+				<TldrawUiButton
+					type="icon"
+					className={styles.sidebarFileListItemMenuTrigger}
+					tooltip={fileMenuLbl}
 					title={fileMenuLbl}
 				>
 					<TlaIcon icon="dots-vertical-strong" />
-				</button>
+				</TldrawUiButton>
 			}
 		/>
 	)

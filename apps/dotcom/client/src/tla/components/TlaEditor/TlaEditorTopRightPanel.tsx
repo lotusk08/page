@@ -1,4 +1,9 @@
-import { SignInButton } from '@clerk/clerk-react'
+import {
+	commentsSidebarOpen,
+	toggleCommentsSidebar,
+	useCommentingEnabled,
+	useCommentsSidebarOpen,
+} from '@tldraw/commenting'
 import {
 	PUBLISH_PREFIX,
 	READ_ONLY_LEGACY_PREFIX,
@@ -9,16 +14,33 @@ import {
 import classNames from 'classnames'
 import { useCallback, useRef } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { PeopleMenu, useEditor, usePassThroughWheelEvents, useTranslation } from 'tldraw'
+import {
+	PeopleMenu,
+	TldrawUiButton,
+	useDialogs,
+	useEditor,
+	usePassThroughWheelEvents,
+	useTranslation,
+} from 'tldraw'
 import { routes } from '../../../routeDefs'
 import { useMaybeApp } from '../../hooks/useAppState'
 import { useCurrentFileId } from '../../hooks/useCurrentFileId'
+import { useIsCommentingEnabled } from '../../hooks/useIsCommentingEnabled'
 import { useTldrawAppUiEvents } from '../../utils/app-ui-events'
-import { F } from '../../utils/i18n'
+import { defineMessages, F, useMsg } from '../../utils/i18n'
+import { TlaSignInDialog } from '../dialogs/TlaSignInDialog'
 import { TlaCtaButton } from '../TlaCtaButton/TlaCtaButton'
 import { TlaFileShareMenu } from '../TlaFileShareMenu/TlaFileShareMenu'
-import { TlaSignedOutShareButton } from '../TlaSignedOutShareButton/TlaSignedOutShareButton'
+import { TlaIcon } from '../TlaIcon/TlaIcon'
 import styles from './top.module.css'
+
+const ctaMessages = defineMessages({
+	signInToShare: { defaultMessage: 'Sign in to share' },
+})
+
+const commentsMessages = defineMessages({
+	comments: { defaultMessage: 'Comments' },
+})
 
 export function TlaEditorTopRightPanel({
 	isAnonUser,
@@ -27,28 +49,41 @@ export function TlaEditorTopRightPanel({
 	isAnonUser: boolean
 	context: 'file' | 'published-file' | 'scratch' | 'legacy'
 }) {
+	const ctaString = useMsg(ctaMessages.signInToShare)
 	const ref = useRef<HTMLDivElement>(null)
 	usePassThroughWheelEvents(ref)
 	const fileId = useCurrentFileId()
 	const trackEvent = useTldrawAppUiEvents()
+	const { addDialog } = useDialogs()
+	const editor = useEditor()
+	// Share and the comments sidebar are mutually exclusive: opening share closes the sidebar.
+	// (The reverse is automatic — clicking the sidebar button dismisses the share popover as an
+	// outside interaction.)
+	const closeSidebarOnShareOpen = useCallback(
+		(isOpen: boolean) => {
+			if (isOpen) commentsSidebarOpen.set(editor, false)
+		},
+		[editor]
+	)
 
 	if (isAnonUser) {
 		return (
-			<div ref={ref} className={classNames(styles.topRightPanel)}>
+			<div ref={ref} className={styles.topRightPanel}>
 				<PeopleMenu />
-				<TlaSignedOutShareButton fileId={fileId} context={context} />
-				<SignInButton
-					mode="modal"
-					forceRedirectUrl={location.pathname + location.search}
-					signUpForceRedirectUrl={location.pathname + location.search}
+				<SignedOutShareButton fileId={fileId} context={context} />
+				<TlaCtaButton
+					canvas
+					data-testid="tla-sign-in-button"
+					onClick={() => {
+						trackEvent('sign-up-clicked', {
+							source: 'anon-landing-page',
+							ctaMessage: ctaString,
+						})
+						addDialog({ component: TlaSignInDialog })
+					}}
 				>
-					<TlaCtaButton
-						data-testid="tla-sign-up"
-						onClick={() => trackEvent('open-share-menu', { source: 'anon-landing-page' })}
-					>
-						<F defaultMessage="Sign in" />
-					</TlaCtaButton>
-				</SignInButton>
+					<F {...ctaMessages.signInToShare} />
+				</TlaCtaButton>
 			</div>
 		)
 	}
@@ -56,20 +91,65 @@ export function TlaEditorTopRightPanel({
 	return (
 		<div ref={ref} className={styles.topRightPanel}>
 			<PeopleMenu />
+			{/* Only file editors mount the comments sidebar (see CommentsOnCanvas); in legacy and
+			    published contexts the button would toggle state nothing reads. */}
+			{context !== 'legacy' && context !== 'published-file' && <CommentsSidebarButton />}
 			{context === 'legacy' && <LegacyImportButton />}
-			<TlaFileShareMenu fileId={fileId!} source="file-header" context={context}>
-				<TlaCtaButton
-					data-testid="tla-share-button"
-					onClick={() => trackEvent('open-share-menu', { source: 'top-bar' })}
+			{context !== 'legacy' && (
+				<TlaFileShareMenu
+					fileId={fileId!}
+					source="file-header"
+					context={context}
+					onOpenChange={closeSidebarOnShareOpen}
 				>
-					<F defaultMessage="Share" />
-				</TlaCtaButton>
-			</TlaFileShareMenu>
+					<TlaCtaButton
+						canvas
+						data-testid="tla-share-button"
+						onClick={() => trackEvent('open-share-menu', { source: 'top-bar' })}
+					>
+						<F defaultMessage="Share" />
+					</TlaCtaButton>
+				</TlaFileShareMenu>
+			)}
 		</div>
 	)
 }
 
-function useGetFileName() {
+/**
+ * Toggles the comments sidebar (the thread list) open and closed. Lives next to Share as an opt-in
+ * entry point, decoupled from the comment tool: the tool places comments on the canvas, this button
+ * reveals the list. Hidden entirely when commenting isn't licensed for this editor, or when the
+ * user isn't covered by dotcom's commenting flag.
+ */
+function CommentsSidebarButton() {
+	const editor = useEditor()
+	const trackEvent = useTldrawAppUiEvents()
+	const commentingEnabled = useCommentingEnabled()
+	const commentingEnabledForUser = useIsCommentingEnabled()
+	const open = useCommentsSidebarOpen()
+	const label = useMsg(commentsMessages.comments)
+
+	if (!commentingEnabled || !commentingEnabledForUser) return null
+
+	return (
+		<TldrawUiButton
+			type="icon"
+			className={styles.commentsSidebarButton}
+			data-testid="tla-comments-button"
+			aria-pressed={open}
+			tooltip={label}
+			title={label}
+			onClick={() => {
+				toggleCommentsSidebar(editor)
+				trackEvent('toggle-comments-sidebar', { source: 'comments', open: !open })
+			}}
+		>
+			<TlaIcon icon="comment" />
+		</TldrawUiButton>
+	)
+}
+
+export function useGetFileName() {
 	const editor = useEditor()
 	const msg = useTranslation()
 	const defaultPageName = msg('page-menu.new-page-initial-name')
@@ -122,15 +202,45 @@ function LegacyImportButton() {
 		const { prefix, id } = roomInfo
 		const res = await app.createFile({ name, createSource: `${prefix}/${id}` })
 		if (res.ok) {
-			const { file } = res.value
-			navigate(routes.tlaFile(file.id))
+			const { fileId } = res.value
+			navigate(routes.tlaFile(fileId))
 			trackEvent('create-file', { source: 'legacy-import-button' })
 		}
 	}, [app, editor, name, navigate, roomInfo, trackEvent])
 
 	return (
-		<TlaCtaButton data-testid="tla-import-button" onClick={handleClick}>
-			<F defaultMessage="Copy to my files" />
+		<TlaCtaButton canvas data-testid="tla-import-button" onClick={handleClick}>
+			<F defaultMessage="Copy to my workspace" />
 		</TlaCtaButton>
+	)
+}
+
+export const signedOutShareMessages = defineMessages({
+	share: { defaultMessage: 'Share' },
+})
+
+export function SignedOutShareButton({
+	fileId,
+	context,
+}: {
+	fileId?: string
+	context: 'file' | 'published-file' | 'scratch' | 'legacy'
+}) {
+	const trackEvent = useTldrawAppUiEvents()
+	const shareLbl = useMsg(signedOutShareMessages.share)
+
+	return (
+		<TlaFileShareMenu fileId={fileId} context={context} source="anon">
+			<TldrawUiButton
+				type="icon"
+				data-testid="tla-share-button"
+				tooltip={shareLbl}
+				title={shareLbl}
+				className={classNames(styles.topRightAnonShareButton)}
+				onClick={() => trackEvent('open-share-menu', { source: 'anon-top-bar' })}
+			>
+				<TlaIcon icon="share" />
+			</TldrawUiButton>
+		</TlaFileShareMenu>
 	)
 }

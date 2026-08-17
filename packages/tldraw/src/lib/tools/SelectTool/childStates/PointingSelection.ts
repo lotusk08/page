@@ -1,4 +1,4 @@
-import { StateNode, TLClickEventInfo, TLGroupShape, TLPointerEventInfo } from '@tldraw/editor'
+import { StateNode, TLClickEventInfo, TLPointerEventInfo } from '@tldraw/editor'
 import { selectOnCanvasPointerUp } from '../../selection-logic/selectOnCanvasPointerUp'
 
 export class PointingSelection extends StateNode {
@@ -18,7 +18,7 @@ export class PointingSelection extends StateNode {
 	}
 
 	override onPointerMove(info: TLPointerEventInfo) {
-		if (this.editor.inputs.isDragging) {
+		if (this.editor.inputs.getIsDragging()) {
 			this.startTranslating(info)
 		}
 	}
@@ -32,12 +32,21 @@ export class PointingSelection extends StateNode {
 		this.parent.transition('translating', info)
 	}
 
-	override onDoubleClick?(info: TLClickEventInfo) {
+	override onDoubleClick(info: TLClickEventInfo) {
+		if (
+			this.editor.inputs.getShiftKey() ||
+			info.phase !== 'down' ||
+			info.ctrlKey ||
+			info.shiftKey
+		) {
+			return
+		}
+
 		const hoveredShape = this.editor.getHoveredShape()
 		const hitShape =
-			hoveredShape && !this.editor.isShapeOfType<TLGroupShape>(hoveredShape, 'group')
+			hoveredShape && !this.editor.isShapeOfType(hoveredShape, 'group')
 				? hoveredShape
-				: this.editor.getShapeAtPoint(this.editor.inputs.currentPagePoint, {
+				: this.editor.getShapeAtPoint(this.editor.inputs.getCurrentPagePoint(), {
 						hitInside: true,
 						margin: 0,
 						renderingOnly: true,
@@ -46,7 +55,7 @@ export class PointingSelection extends StateNode {
 		if (hitShape) {
 			// todo: extract the double click shape logic from idle so that we can share it here
 			this.parent.transition('idle')
-			this.parent.onDoubleClick?.({
+			this.parent.getCurrent()?.handleEvent({
 				...info,
 				target: 'shape',
 				shape: this.editor.getShape(hitShape)!,

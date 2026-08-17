@@ -1,13 +1,13 @@
 'use client'
 
-import { cn } from '@/utils/cn'
-import { useLocalStorageState } from '@/utils/storage'
 import { Field, Label, Textarea } from '@headlessui/react'
 import { ArrowLongRightIcon, CheckCircleIcon, HandThumbDownIcon } from '@heroicons/react/20/solid'
 import { HandThumbUpIcon } from '@heroicons/react/24/solid'
-import { track } from '@vercel/analytics'
 import { usePathname } from 'next/navigation'
-import { FormEventHandler, useCallback, useState } from 'react'
+import { FormEventHandler, useState } from 'react'
+import { track } from '@/app/analytics'
+import { cn } from '@/utils/cn'
+import { useLocalStorageState } from '@/utils/storage'
 
 const DEBUGGING = false
 
@@ -20,6 +20,11 @@ async function submitFeedback(
 	const feedback: { value: number; message?: string } = { value: _feedback }
 	if (_note !== '') feedback.message = _note
 	track('Feedback', feedback)
+	return
+}
+async function submitThumbsFeedback(_sessionId: string, _pathname: string, _feedback: 1 | -1 | 0) {
+	const feedback: { value: number; message?: string } = { value: _feedback }
+	track('Helpful', feedback)
 	return
 }
 
@@ -37,53 +42,46 @@ export function DocsFeedbackWidget({ className }: { className?: string }) {
 		'idle' | 'thumbs-up' | 'thumbs-down' | 'loading' | 'success' | 'error'
 	>('idle')
 
-	const handleThumbsDown = useCallback(async () => {
+	const handleThumbsDown = async () => {
 		setState((s) => {
-			if (s === 'loading') {
-				return s
-			} else if (s === 'thumbs-down') {
-				return 'idle'
-			} else {
-				return 'thumbs-down'
+			const next = s === 'thumbs-down' ? 'idle' : 'thumbs-down'
+			if (s === 'thumbs-down') {
+				submitThumbsFeedback(sessionId, pathname, -1)
 			}
+			return next
 		})
-	}, [])
+	}
 
-	const handleThumbsUp = useCallback(() => {
+	const handleThumbsUp = () => {
 		setState((s) => {
-			if (s === 'loading') {
-				return s
-			} else if (s === 'thumbs-up') {
-				return 'idle'
-			} else {
-				return 'thumbs-up'
+			const next = s === 'thumbs-up' ? 'idle' : 'thumbs-up'
+			if (s === 'thumbs-up') {
+				submitThumbsFeedback(sessionId, pathname, 1)
 			}
+			return next
 		})
-	}, [])
+	}
 
-	const handleSubmit = useCallback<FormEventHandler<HTMLFormElement>>(
-		async (e) => {
-			e.preventDefault()
-			if (state === 'loading') return
-			if (!sessionId) return
+	const handleSubmit: FormEventHandler<HTMLFormElement> = async (e) => {
+		e.preventDefault()
+		if (state === 'loading') return
+		if (!sessionId) return
 
-			try {
-				const form = e.currentTarget
-				const formData = new FormData(form)
-				const feedback = formData.get('feedback') as string
+		try {
+			const form = e.currentTarget
+			const formData = new FormData(form)
+			const feedback = formData.get('feedback') as string
 
-				setState('loading')
-				await submitFeedback(sessionId, pathname, state === 'thumbs-up' ? 1 : -1, feedback)
-				setState('success')
-				setTimeout(() => {
-					setDidSubmit(true)
-				}, 3000)
-			} catch {
-				setState('error')
-			}
-		},
-		[state, sessionId, pathname, setDidSubmit]
-	)
+			setState('loading')
+			await submitFeedback(sessionId, pathname, state === 'thumbs-up' ? 1 : -1, feedback)
+			setState('success')
+			setTimeout(() => {
+				setDidSubmit(true)
+			}, 3000)
+		} catch {
+			setState('error')
+		}
+	}
 
 	// todo, improve this so that thumbs ups and thumbs downs are also captured
 	if (didSubmit && !(DEBUGGING && process.env.NODE_ENV === 'development')) return null

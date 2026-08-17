@@ -9,13 +9,14 @@ import {
 	Editor,
 	TLRichText,
 	TLShapeId,
+	isEqual,
 	preventDefault,
-	stopEventPropagation,
 	useEditor,
 	useEvent,
 	useUniqueSafeId,
 } from '@tldraw/editor'
 import React, { useLayoutEffect, useRef } from 'react'
+import { isEditingRichTextList } from '../../utils/text/richText'
 
 /** @public */
 export interface TextAreaProps {
@@ -29,6 +30,7 @@ export interface TextAreaProps {
 	handleChange(changeInfo: { plaintext?: string; richText?: TLRichText }): void
 	handleInputPointerDown(e: React.PointerEvent<HTMLElement>): void
 	handleDoubleClick(e: any): any
+	handlePaste(e: ClipboardEvent | React.ClipboardEvent<HTMLTextAreaElement>): void
 	hasCustomTabBehavior?: boolean
 }
 
@@ -56,6 +58,7 @@ export const RichTextArea = React.forwardRef<HTMLDivElement, TextAreaProps>(func
 		handleKeyDown,
 		handleDoubleClick,
 		hasCustomTabBehavior,
+		handlePaste,
 	},
 	ref
 ) {
@@ -70,7 +73,7 @@ export const RichTextArea = React.forwardRef<HTMLDivElement, TextAreaProps>(func
 	useLayoutEffect(() => {
 		if (!rTextEditor.current) {
 			rInitialRichText.current = richText
-		} else if (rInitialRichText.current !== richText) {
+		} else if (!isEqual(rInitialRichText.current, richText)) {
 			rTextEditor.current.commands.setContent(richText as JSONContent)
 		}
 	}, [richText])
@@ -112,6 +115,7 @@ export const RichTextArea = React.forwardRef<HTMLDivElement, TextAreaProps>(func
 	const onFocus = useEvent(handleFocus)
 	const onBlur = useEvent(handleBlur)
 	const onDoubleClick = useEvent(handleDoubleClick)
+	const onPaste = useEvent(handlePaste)
 	useLayoutEffect(() => {
 		if (!isEditing || !tipTapConfig || !rTextEditorEl.current) return
 
@@ -169,7 +173,12 @@ export const RichTextArea = React.forwardRef<HTMLDivElement, TextAreaProps>(func
 
 					onKeyDown(event)
 				},
-				handleDoubleClick: (view, pos, event) => onDoubleClick(event),
+				handlePaste: (view: EditorView, event: ClipboardEvent) => {
+					onPaste(event)
+					if (event.defaultPrevented) return true
+					return false
+				},
+				handleDoubleClick: (_view, _pos, event) => onDoubleClick(event),
 				...editorProps,
 			},
 			coreExtensionOptions: {
@@ -177,6 +186,11 @@ export const RichTextArea = React.forwardRef<HTMLDivElement, TextAreaProps>(func
 					blockSeparator: '\n',
 				},
 			},
+			// N.B. We disable the text direction in the core list here,
+			// but we add it back in again in our own extensions list so that
+			// people can omit/override it if they want to.
+			enableCoreExtensions: { textDirection: false },
+			textDirection: 'auto',
 			...restOfTipTapConfig,
 			content: rInitialRichText.current as JSONContent,
 		})
@@ -208,6 +222,7 @@ export const RichTextArea = React.forwardRef<HTMLDivElement, TextAreaProps>(func
 		onBlur,
 		onDoubleClick,
 		onChange,
+		onPaste,
 		onKeyDown,
 		editor,
 		shapeId,
@@ -225,13 +240,13 @@ export const RichTextArea = React.forwardRef<HTMLDivElement, TextAreaProps>(func
 			tabIndex={-1}
 			data-testid="rich-text-area"
 			className="tl-rich-text tl-text tl-text-input"
-			onContextMenu={isEditing ? stopEventPropagation : undefined}
+			onContextMenu={isEditing ? (e) => e.stopPropagation() : undefined}
 			// N.B. When PointerStateExtension was introduced, this was moved there.
 			// However, that caused selecting over list items to break.
 			// The handleDOMEvents in TipTap don't seem to support the pointerDownCapture event.
-			onPointerDownCapture={stopEventPropagation}
+			onPointerDownCapture={(e) => e.stopPropagation()}
 			// This onTouchEnd is important for Android to be able to change selection on text.
-			onTouchEnd={stopEventPropagation}
+			onTouchEnd={(e) => e.stopPropagation()}
 			// On FF, there's a behavior where dragging a selection will grab that selection into
 			// the drag event. However, once the drag is over, and you select away from the textarea,
 			// starting a drag over the textarea will restart a selection drag instead of a shape drag.
@@ -250,8 +265,7 @@ function handleTab(editor: Editor, view: EditorView, event: KeyboardEvent) {
 	// Don't exit the editor.
 	event.preventDefault()
 
-	const textEditor = editor.getRichTextEditor()
-	if (textEditor?.isActive('bulletList') || textEditor?.isActive('orderedList')) return
+	if (isEditingRichTextList(editor)) return
 
 	const { state, dispatch } = view
 	const { $from, $to } = state.selection
@@ -278,6 +292,7 @@ function handleTab(editor: Editor, view: EditorView, event: KeyboardEvent) {
 				isInList = true
 				return false // Stop iteration
 			}
+			return true
 		})
 
 		// TODO: for now skip over lists. Later, we might consider handling them using

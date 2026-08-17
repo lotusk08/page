@@ -1,4 +1,4 @@
-import { BoxModel } from '@tldraw/tlschema'
+import { BoxModel, TLShape } from '@tldraw/tlschema'
 import { Box } from '../../primitives/Box'
 import { VecLike } from '../../primitives/Vec'
 
@@ -40,9 +40,15 @@ export interface TLSvgExportOptions {
 	background?: boolean
 
 	/**
-	 * How much padding to include around the bounds of exports? Defaults to 32px.
+	 * How much padding to include around the bounds of exports.
+	 *
+	 * - `'auto'` (default) — trim to visual content bounds, capturing overflow (like thick
+	 *    strokes or arrowheads) without extra whitespace.
+	 * - `number` (e.g. `32`) — fixed padding in px. No trimming; overflow beyond the padding
+	 *    region is clipped.
+	 * - `0` — no padding, no trimming, overflow is clipped.
 	 */
-	padding?: number
+	padding?: number | 'auto'
 
 	/**
 	 * Should the export be rendered in dark mode (true) or light mode (false)? Defaults to the
@@ -71,12 +77,6 @@ export interface TLImageExportOptions extends TLSvgExportOptions {
 	 */
 	format?: TLExportType
 }
-
-/**
- * @public
- * @deprecated use {@link TLImageExportOptions} instead
- */
-export type TLSvgOptions = TLImageExportOptions
 
 /** @public */
 export interface TLCameraMoveOptions {
@@ -186,4 +186,76 @@ export interface TLCameraConstraints {
 				x: 'free' | 'fixed' | 'inside' | 'outside' | 'contain'
 				y: 'free' | 'fixed' | 'inside' | 'outside' | 'contain'
 		  }
+}
+
+/** @public */
+export interface TLUpdatePointerOptions {
+	/** Whether to update the pointer immediately, rather than on the next tick. */
+	immediate?: boolean
+	/**
+	 * The point, in screen-space, to update the pointer to. Defaults to the position of the last
+	 * pointer event.
+	 */
+	point?: VecLike
+	pointerId?: number
+	ctrlKey?: boolean
+	altKey?: boolean
+	shiftKey?: boolean
+	metaKey?: boolean
+	accelKey?: boolean
+	isPen?: boolean
+	button?: number
+}
+
+/**
+ * Options to {@link Editor.getShapeAtPoint}.
+ *
+ * @public
+ */
+export interface TLGetShapeAtPointOptions {
+	/**
+	 * The margin to apply to the shape.
+	 * If a number, it will be applied to both the inside and outside of the shape.
+	 * If an array, the first element will be applied to the inside of the shape, and the second element will be applied to the outside.
+	 *
+	 * @example
+	 * ```ts
+	 * // Get the shape at the center of the screen
+	 * const shape = editor.getShapeAtProps({
+	 *   margin: 10,
+	 * })
+	 *
+	 * // Get the shape at the center of the screen with a 10px inner margin and a 5px outer margin
+	 * const shape = editor.getShapeAtProps({
+	 *   margin: [10, 5],
+	 * })
+	 * ```
+	 */
+	margin?: number | [number, number]
+	/**
+	 * Whether to register hits inside of shapes (beyond the margin), such as the inside of a solid shape.
+	 */
+	hitInside?: boolean
+	/**
+	 * Whether to register hits on locked shapes.
+	 */
+	hitLocked?: boolean
+	/**
+	 * Whether to register hits on labels.
+	 */
+	hitLabels?: boolean
+	/**
+	 * Whether to only return hits on shapes that are currently being rendered.
+	 * todo: rename this to hitCulled or hitNotRendering
+	 */
+	renderingOnly?: boolean
+	/**
+	 * Whether to register hits on the inside of frame shapes.
+	 * todo: rename this to hitInsideFrames
+	 */
+	hitFrameInside?: boolean
+	/**
+	 * A filter function to apply to the shapes.
+	 */
+	filter?(shape: TLShape): boolean
 }

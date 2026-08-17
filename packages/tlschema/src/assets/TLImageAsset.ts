@@ -1,6 +1,6 @@
 import { createMigrationIds, createRecordMigrationSequence } from '@tldraw/store'
 import { T } from '@tldraw/validate'
-import { TLAsset } from '../records/TLAsset'
+import { RecordProps } from '../recordsWithProps'
 import { TLBaseAsset, createAssetValidator } from './TLBaseAsset'
 
 /**
@@ -17,21 +17,26 @@ export type TLImageAsset = TLBaseAsset<
 		mimeType: string | null
 		src: string | null
 		fileSize?: number
+		pixelRatio?: number
 	}
 >
 
 /** @public */
+export const imageAssetProps = {
+	w: T.number,
+	h: T.number,
+	name: T.string,
+	isAnimated: T.boolean,
+	mimeType: T.string.nullable(),
+	src: T.srcUrl.nullable(),
+	fileSize: T.nonZeroNumber.optional(),
+	pixelRatio: T.positiveNumber.optional(),
+} satisfies RecordProps<TLImageAsset>
+
+/** Validator for image assets. @public */
 export const imageAssetValidator: T.Validator<TLImageAsset> = createAssetValidator(
 	'image',
-	T.object({
-		w: T.number,
-		h: T.number,
-		name: T.string,
-		isAnimated: T.boolean,
-		mimeType: T.string.nullable(),
-		src: T.srcUrl.nullable(),
-		fileSize: T.nonZeroNumber.optional(),
-	})
+	T.object(imageAssetProps)
 )
 
 const Versions = createMigrationIds('com.tldraw.asset.image', {
@@ -40,15 +45,45 @@ const Versions = createMigrationIds('com.tldraw.asset.image', {
 	MakeUrlsValid: 3,
 	AddFileSize: 4,
 	MakeFileSizeOptional: 5,
+	AddPixelRatio: 6,
 } as const)
 
+/**
+ * Migration version identifiers for image assets. These define the different schema versions
+ * that image assets have gone through during the evolution of the tldraw data model.
+ *
+ * @example
+ * ```ts
+ * import { imageAssetVersions } from '@tldraw/tlschema'
+ *
+ * // Access specific version IDs
+ * console.log(imageAssetVersions.AddIsAnimated) // Version when isAnimated was added
+ * console.log(imageAssetVersions.RenameWidthHeight) // Version when width/height became w/h
+ * ```
+ *
+ * @public
+ */
 export { Versions as imageAssetVersions }
 
-/** @public */
+/**
+ * Migration sequence for image assets. Handles the evolution of the image asset schema
+ * over time, providing both forward (up) and backward (down) migration functions to
+ * maintain compatibility across different versions of the tldraw data model.
+ *
+ * The sequence includes migrations for:
+ * - Adding the `isAnimated` property to track animated images
+ * - Renaming `width`/`height` properties to shorter `w`/`h` names
+ * - Ensuring URLs are valid format
+ * - Adding file size tracking
+ * - Making file size optional
+ *
+ *
+ * @public
+ */
 export const imageAssetMigrations = createRecordMigrationSequence({
 	sequenceId: 'com.tldraw.asset.image',
 	recordType: 'asset',
-	filter: (asset) => (asset as TLAsset).type === 'image',
+	filter: (asset) => (asset as TLImageAsset).type === 'image',
 	sequence: [
 		{
 			id: Versions.AddIsAnimated,
@@ -105,6 +140,15 @@ export const imageAssetMigrations = createRecordMigrationSequence({
 				if (asset.props.fileSize === undefined) {
 					asset.props.fileSize = -1
 				}
+			},
+		},
+		{
+			id: Versions.AddPixelRatio,
+			up: (_asset: any) => {
+				// noop — pixelRatio is optional and undefined by default
+			},
+			down: (asset: any) => {
+				delete asset.props.pixelRatio
 			},
 		},
 	],

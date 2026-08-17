@@ -1,7 +1,7 @@
 import { Page, expect } from '@playwright/test'
 import { Editor } from 'tldraw'
+import test from '../fixtures/fixtures'
 import { setupPage, setupPageWithShapes } from '../shared-e2e'
-import test from './fixtures/fixtures'
 
 declare const editor: Editor
 
@@ -199,6 +199,28 @@ test.describe('Keyboard Shortcuts', () => {
 		await page.keyboard.press('q')
 		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject({
 			name: 'toggle-tool-lock',
+			data: { source: 'kbd' },
+		})
+	})
+
+	test('Copy hovered styles', async () => {
+		// The action copies styles from the shape under the pointer, so create a shape in the
+		// middle of the viewport and move the mouse over it before pressing the shortcut.
+		const point = await page.evaluate(() => {
+			const center = editor.getViewportPageBounds().center
+			editor.createShape({
+				type: 'geo',
+				x: center.x - 50,
+				y: center.y - 50,
+				props: { w: 100, h: 100, fill: 'solid' },
+			})
+			const screen = editor.pageToScreen(center)
+			return { x: screen.x, y: screen.y }
+		})
+		await page.mouse.move(point.x, point.y)
+		await page.keyboard.press('Shift+q')
+		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject({
+			name: 'copy-hovered-styles',
 			data: { source: 'kbd' },
 		})
 	})
@@ -408,11 +430,31 @@ test.describe('Actions on shapes', () => {
 
 		/* ---------------------- Misc ---------------------- */
 
-		// toggle lock
+		// These actions require selected shapes to run
+
+		await page.keyboard.press('r')
+		await page.mouse.click(100, 100)
+		await page.keyboard.press('r')
+		await page.mouse.click(100, 300)
+		await page.keyboard.press('r')
+		await page.mouse.click(300, 300)
+
+		// First verify they don't fire when nothing is selected
+		await page.keyboard.press('Escape') // deselect all
+		await page.keyboard.press('Escape') // deselect all
+		const prevEvent = await page.evaluate(() => __tldraw_ui_event)
+
 		await page.keyboard.press('Shift+l')
-		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject({
-			name: 'toggle-lock',
-		})
+		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject(prevEvent)
+
+		await page.keyboard.press('Control+Shift+Alt+=')
+		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject(prevEvent)
+
+		await page.keyboard.press('Control+Shift+Alt+-')
+		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject(prevEvent)
+
+		// Now select shapes and verify the actions fire
+		await page.keyboard.press('Control+a')
 
 		await page.keyboard.press('Control+Shift+Alt+=')
 		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject({
@@ -422,6 +464,12 @@ test.describe('Actions on shapes', () => {
 		await page.keyboard.press('Control+Shift+Alt+-')
 		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject({
 			name: 'shrink-shapes',
+		})
+
+		// toggle lock (must be the last one here)
+		await page.keyboard.press('Shift+l')
+		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject({
+			name: 'toggle-lock',
 		})
 
 		// await page.keyboard.press('Control+i')
@@ -436,8 +484,40 @@ test.describe('Actions on shapes', () => {
 		// 	data: { source: 'dialog' },
 		// })
 	})
-})
 
+	// TODO: Annoyingly, the alt key is being 'released' in the above test suite.
+	// I'll need to figure that out in a separate PR. In the meantime,
+	// this pulls out the rotate tests into a separate test suite.
+	test('rotate', async () => {
+		await setupPageWithShapes(page)
+
+		await page.keyboard.press('Control+a')
+
+		// rotate — Shift+ArrowLeft, Shift+ArrowRight
+		await page.keyboard.press('Shift+.')
+		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject({
+			name: 'rotate-cw',
+			data: { source: 'kbd', fine: false },
+		})
+		await page.keyboard.press('Shift+,')
+		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject({
+			name: 'rotate-ccw',
+			data: { source: 'kbd', fine: false },
+		})
+
+		// rotate — Shift+Alt+ArrowLeft, Shift+Alt+ArrowRight
+		await page.keyboard.press('Shift+Alt+.')
+		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject({
+			name: 'rotate-cw',
+			data: { source: 'kbd', fine: true },
+		})
+		await page.keyboard.press('Shift+Alt+,')
+		expect(await page.evaluate(() => __tldraw_ui_event)).toMatchObject({
+			name: 'rotate-ccw',
+			data: { source: 'kbd', fine: true },
+		})
+	})
+})
 test.describe('Delete bug', () => {
 	test.beforeEach(async ({ browser }) => {
 		page = await browser.newPage()
@@ -558,6 +638,254 @@ test.describe('Shape Navigation', () => {
 		expect(await page.evaluate(() => editor.getOnlySelectedShape())).toMatchObject({
 			x: 100,
 			y: 200,
+		})
+	})
+
+	test('Container navigation (entering and exiting containers)', async ({ isMobile }) => {
+		if (isMobile) return // can't test this on mobile
+
+		// Create a frame
+		await page.keyboard.press('f')
+		await page.mouse.down()
+		await page.mouse.move(300, 300)
+		await page.mouse.up()
+
+		// Create a shape inside the frame
+		await page.keyboard.press('r')
+		await page.mouse.click(200, 200)
+		await page.keyboard.press('v')
+
+		// Navigate up to the parent (frame) with Control+Shift+Up
+		await page.keyboard.press('Control+Shift+ArrowUp')
+		expect(
+			await page.evaluate(() => {
+				const shape = editor.getOnlySelectedShape()
+				return shape && shape.type === 'frame'
+			})
+		).toBe(true)
+
+		// Navigate down to the first child with Control+Shift+Down
+		await page.keyboard.press('Control+Shift+ArrowDown')
+		expect(
+			await page.evaluate(() => {
+				const shape = editor.getOnlySelectedShape()
+				return shape && shape.type === 'geo'
+			})
+		).toBe(true)
+
+		// Now test with a group
+		// Create multiple shapes to group
+		await page.keyboard.press('v')
+		await page.keyboard.press('r')
+		await page.mouse.click(450, 200)
+		await page.keyboard.press('r')
+		await page.mouse.click(475, 200)
+
+		// Select both shapes
+		await page.keyboard.press('v')
+		await page.mouse.move(310, 50)
+		await page.mouse.down()
+		await page.mouse.move(310, 50)
+		await page.mouse.move(700, 500)
+		await page.mouse.up()
+
+		// Group them
+		await page.keyboard.press('Control+g')
+
+		// Navigate up to the group with Control+Shift+Up
+		await page.keyboard.press('Control+Shift+ArrowUp')
+		expect(
+			await page.evaluate(() => {
+				const shape = editor.getOnlySelectedShape()
+				return shape && shape.type === 'group'
+			})
+		).toBe(true)
+
+		// Navigate down to a child in the group
+		await page.keyboard.press('Control+Shift+ArrowDown')
+		expect(
+			await page.evaluate(() => {
+				const shape = editor.getOnlySelectedShape()
+				return shape && shape.type === 'geo'
+			})
+		).toBe(true)
+	})
+
+	test('Tab navigation respects container boundaries', async ({ isMobile }) => {
+		if (isMobile) return // can't test this on mobile
+
+		// Clear the canvas and reset the view
+		await page.keyboard.press('Control+a')
+		await page.keyboard.press('Backspace')
+		await page.keyboard.press('v')
+
+		// Create a frame
+		await page.keyboard.press('f')
+		await page.mouse.move(100, 100)
+		await page.mouse.down()
+		await page.mouse.move(300, 300)
+		await page.mouse.up()
+
+		// Create shapes inside the frame
+		await page.keyboard.press('r')
+		await page.mouse.click(150, 150) // Shape inside frame
+		await page.keyboard.press('r')
+		await page.mouse.click(250, 150) // Another shape inside frame
+
+		// Create shapes outside the frame
+		await page.keyboard.press('r')
+		await page.mouse.click(400, 150) // Shape outside frame
+		await page.keyboard.press('r')
+		await page.mouse.click(400, 250) // Another shape outside frame
+		await page.keyboard.press('v')
+
+		// Test 1: Tab from outside shape should only navigate between outside shapes
+		await page.mouse.click(400, 150) // Select first outside shape
+
+		// Tab to next outside shape
+		await page.keyboard.press('Tab')
+		expect(
+			await page.evaluate(() => {
+				const shape = editor.getOnlySelectedShape()!
+				return { x: Math.round(shape.x), y: Math.round(shape.y) }
+			})
+		).toMatchObject({
+			x: 100,
+			y: 100,
+		})
+
+		// Tab again should wrap around to first outside shape
+		await page.keyboard.press('Tab')
+		expect(
+			await page.evaluate(() => {
+				const shape = editor.getOnlySelectedShape()!
+				return { x: Math.round(shape.x), y: Math.round(shape.y) }
+			})
+		).toMatchObject({
+			x: 300,
+			y: 50,
+		})
+
+		// Test 2: Tab from inside shape should only navigate between shapes in the same container
+		await page.mouse.click(150, 150) // Select first inside shape
+
+		// Tab to next shape inside frame
+		await page.keyboard.press('Tab')
+		expect(
+			await page.evaluate(() => {
+				const shape = editor.getOnlySelectedShape()!
+				return { x: Math.round(shape.x), y: Math.round(shape.y) }
+			})
+		).toMatchObject({
+			x: -50,
+			y: -50,
+		})
+
+		// Tab again should wrap around to first shape inside frame
+		await page.keyboard.press('Tab')
+		expect(
+			await page.evaluate(() => {
+				const shape = editor.getOnlySelectedShape()!
+				return { x: Math.round(shape.x), y: Math.round(shape.y) }
+			})
+		).toMatchObject({
+			x: 50,
+			y: -50,
+		})
+	})
+
+	test('Tab navigation with nested containers', async ({ isMobile }) => {
+		if (isMobile) return // can't test this on mobile
+
+		// Clear the canvas and reset the view
+		await page.keyboard.press('Control+a')
+		await page.keyboard.press('Backspace')
+		await page.keyboard.press('v')
+
+		// Create an outer frame
+		await page.keyboard.press('f')
+		await page.mouse.move(100, 100)
+		await page.mouse.down()
+		await page.mouse.move(500, 400)
+		await page.mouse.up()
+
+		// Create an inner frame inside the outer frame
+		await page.keyboard.press('f')
+		await page.mouse.move(150, 150)
+		await page.mouse.down()
+		await page.mouse.move(300, 300)
+		await page.mouse.up()
+
+		// Create shapes directly inside outer frame
+		await page.keyboard.press('r')
+		await page.mouse.click(400, 200) // Shape in outer frame
+		await page.keyboard.press('r')
+		await page.mouse.click(400, 300) // Another shape in outer frame
+
+		// Create shapes inside inner frame
+		await page.keyboard.press('r')
+		await page.mouse.click(200, 200) // Shape in inner frame
+		await page.keyboard.press('r')
+		await page.mouse.click(250, 200) // Another shape in inner frame
+		await page.keyboard.press('v')
+
+		// Test: Tab from inner frame shape should only navigate within inner frame
+		await page.mouse.click(200, 200) // Select first shape in inner frame
+
+		// Tab to next shape in inner frame
+		await page.keyboard.press('Tab')
+		expect(
+			await page.evaluate(() => {
+				const shape = editor.getOnlySelectedShape()!
+				const parent = editor.getShape(shape.parentId)
+				return {
+					shapeX: Math.round(shape.x),
+					shapeY: Math.round(shape.y),
+					isInInnerFrame:
+						parent && parent.type === 'frame' && parent.parentId !== editor.getCurrentPageId(),
+				}
+			})
+		).toMatchObject({
+			shapeX: 0,
+			shapeY: -50,
+			isInInnerFrame: true,
+		})
+
+		// Tab should never select shapes from outer frame
+		await page.keyboard.press('Tab')
+		expect(
+			await page.evaluate(() => {
+				const shape = editor.getOnlySelectedShape()!
+				const parent = editor.getShape(shape.parentId)
+				return {
+					isInInnerFrame:
+						parent && parent.type === 'frame' && parent.parentId !== editor.getCurrentPageId(),
+				}
+			})
+		).toMatchObject({
+			isInInnerFrame: true,
+		})
+	})
+
+	test('Tab navigation does not happen when alt key is pressed', async ({ isMobile }) => {
+		if (isMobile) return // can't test this on mobile
+
+		// Create multiple shapes
+		await page.keyboard.press('r')
+		await page.mouse.click(100, 100)
+		await page.keyboard.press('r')
+		await page.mouse.click(250, 100)
+		await page.keyboard.press('r')
+		await page.mouse.click(400, 100)
+		await page.keyboard.press('v')
+
+		// Click on the first shape to select it
+		await page.mouse.click(100, 100)
+
+		await page.keyboard.press('Alt+Tab')
+		expect(await page.evaluate(() => editor.getOnlySelectedShape())).toMatchObject({
+			x: 0,
+			y: 0,
 		})
 	})
 })

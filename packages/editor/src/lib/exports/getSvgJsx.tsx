@@ -1,11 +1,6 @@
 import { useAtom, useValue } from '@tldraw/state-react'
-import {
-	TLFrameShape,
-	TLGroupShape,
-	TLShape,
-	TLShapeId,
-	getDefaultColorTheme,
-} from '@tldraw/tlschema'
+import { TLFrameShape, TLShape, TLShapeId } from '@tldraw/tlschema'
+import { TLFontFace } from '@tldraw/tlschema'
 import { hasOwnProperty, promiseWithResolve, uniqueId } from '@tldraw/utils'
 import {
 	ComponentType,
@@ -20,15 +15,15 @@ import {
 import { flushSync } from 'react-dom'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { InnerShape, InnerShapeBackground } from '../components/Shape'
-import { Editor, TLRenderingShape } from '../editor/Editor'
-import { TLFontFace } from '../editor/managers/FontManager'
+import type { Editor, TLRenderingShape } from '../editor/Editor'
+import { getColorValue } from '../editor/managers/ThemeManager/defaultThemes'
 import { ShapeUtil } from '../editor/shapes/ShapeUtil'
+import { TLImageExportOptions } from '../editor/types/misc-types'
 import {
 	SvgExportContext,
 	SvgExportContextProvider,
 	SvgExportDef,
 } from '../editor/types/SvgExportContext'
-import { TLImageExportOptions } from '../editor/types/misc-types'
 import { useEditor } from '../hooks/useEditor'
 import { useEvent } from '../hooks/useEvent'
 import { suffixSafeId, useUniqueSafeId } from '../hooks/useSafeId'
@@ -37,17 +32,26 @@ import { Mat } from '../primitives/Mat'
 import { ExportDelay } from './ExportDelay'
 
 export function getSvgJsx(editor: Editor, ids: TLShapeId[], opts: TLImageExportOptions = {}) {
-	if (!window.document) throw Error('No document')
+	const editorDocument = editor.getContainerDocument()
+	if (!editorDocument) throw Error('No document')
 
 	const {
 		scale = 1,
 		// should we include the background in the export? or is it transparent?
 		background = editor.getInstanceState().exportBackground,
-		padding = editor.options.defaultSvgPadding,
 		preserveAspectRatio,
 	} = opts
 
-	const isDarkMode = opts.darkMode ?? editor.user.getIsDarkMode()
+	// Resolve the padding mode:
+	// - 'auto' (or undefined): render with default padding, then trim to actual visual content
+	// - number: fixed padding, no trimming
+	const isAutoTrim = typeof opts.padding !== 'number'
+	const renderPadding =
+		typeof opts.padding === 'number' ? opts.padding : editor.options.defaultSvgPadding
+
+	const colorMode: 'light' | 'dark' =
+		opts.darkMode !== undefined ? (opts.darkMode ? 'dark' : 'light') : editor.getColorMode()
+	const isDarkMode = colorMode === 'dark'
 
 	// ---Figure out which shapes we need to include
 	const shapeIdsToInclude = editor.getShapeAndDescendantIds(ids)
@@ -56,39 +60,41 @@ export function getSvgJsx(editor: Editor, ids: TLShapeId[], opts: TLImageExportO
 		.filter(({ id }) => shapeIdsToInclude.has(id))
 
 	// --- Common bounding box of all shapes
+	const singleFrameShape = ids.length === 1 ? editor.getShape(ids[0]) : null
+	const singleFrameShapeId =
+		singleFrameShape && editor.isShapeFrameLike(singleFrameShape) ? ids[0] : null
+
 	let bbox: null | Box = null
+	let paddingWasApplied = false
 	if (opts.bounds) {
-		bbox = opts.bounds
+		// Explicit bounds: use exact bounds when auto, expand by padding when fixed
+		bbox = isAutoTrim ? opts.bounds.clone() : opts.bounds.clone().expandBy(renderPadding)
 	} else {
-		for (const { id } of renderingShapes) {
-			const maskedPageBounds = editor.getShapeMaskedPageBounds(id)
-			if (!maskedPageBounds) continue
-			if (bbox) {
-				bbox.union(maskedPageBounds)
-			} else {
-				bbox = maskedPageBounds.clone()
-			}
-		}
+		const result = getExportDefaultBounds(
+			editor,
+			renderingShapes,
+			renderPadding,
+			singleFrameShapeId
+		)
+		bbox = result.box
+		paddingWasApplied = result.paddingApplied
 	}
 
 	// no unmasked shapes to export
 	if (!bbox) return
 
-	const singleFrameShapeId =
-		ids.length === 1 && editor.isShapeOfType<TLFrameShape>(editor.getShape(ids[0])!, 'frame')
-			? ids[0]
-			: null
-	if (!singleFrameShapeId) {
-		// Expand by an extra 32 pixels
-		bbox.expandBy(padding)
-	}
+	// When auto-trim is active and padding was applied by getExportDefaultBounds,
+	// the padding region is trimmable: exports will scan pixels from each edge inward
+	// and trim to the actual visual content bounds. This ensures visual overflow
+	// (strokes, arrowheads) is captured without unnecessary whitespace.
+	const trimPadding = isAutoTrim && paddingWasApplied ? renderPadding : 0
 
 	// We want the svg image to be BIGGER THAN USUAL to account for image quality
 	const w = bbox.width * scale
 	const h = bbox.height * scale
 
 	try {
-		document.body.focus?.() // weird but necessary
+		editorDocument.body.focus?.() // weird but necessary
 	} catch {
 		// not implemented
 	}
@@ -108,6 +114,7 @@ export function getSvgJsx(editor: Editor, ids: TLShapeId[], opts: TLImageExportO
 			background={background}
 			singleFrameShapeId={singleFrameShapeId}
 			isDarkMode={isDarkMode}
+			colorMode={colorMode}
 			renderingShapes={renderingShapes}
 			onMount={initialEffectPromise.resolve}
 			waitUntil={exportDelay.waitUntil}
@@ -116,7 +123,77 @@ export function getSvgJsx(editor: Editor, ids: TLShapeId[], opts: TLImageExportO
 		</SvgExport>
 	)
 
-	return { jsx: svg, width: w, height: h, exportDelay }
+	return { jsx: svg, width: w, height: h, exportDelay, trimPadding }
+}
+
+/**
+ * Calculates the default bounds for an SVG export. This function handles:
+ * 1. Computing masked page bounds for each shape
+ * 2. Container logic: if a shape is marked as an export bounds container and it
+ *    contains all other shapes, use its bounds and skip padding
+ * 3. Otherwise, create a union of all shape bounds and apply padding
+ *
+ * The container logic is useful for cases like annotating on an image - if the image
+ * contains all annotations, we want to export exactly the image bounds without extra padding.
+ *
+ * @param editor - The editor instance
+ * @param renderingShapes - The shapes to include in the export
+ * @param padding - Padding to add around the bounds (only applied if no container bounds)
+ * @param singleFrameShapeId - If exporting a single frame, this is its ID (skips padding)
+ * @returns The calculated bounds box, or null if no shapes to export
+ */
+export function getExportDefaultBounds(
+	editor: Editor,
+	renderingShapes: TLRenderingShape[],
+	padding: number,
+	singleFrameShapeId: TLShapeId | null
+): { box: Box; paddingApplied: boolean } | { box: null; paddingApplied: false } {
+	let isBoundedByContainer = false
+	let bbox: null | Box = null
+
+	for (const { id } of renderingShapes) {
+		const maskedPageBounds = editor.getShapeMaskedPageBounds(id)
+		if (!maskedPageBounds) continue
+
+		// Check if this shape is an export bounds container (e.g., an image being annotated)
+		const shape = editor.getShape(id)!
+		const isContainer = editor.getShapeUtil(shape).isExportBoundsContainer(shape)
+
+		if (bbox) {
+			// Container logic: if this is a container and it contains all shapes processed so far,
+			// use the container's bounds instead of the union. This prevents extra padding around
+			// things like annotated images.
+			if (isContainer && Box.ContainsApproximately(maskedPageBounds, bbox)) {
+				isBoundedByContainer = true
+				bbox = maskedPageBounds.clone()
+			} else {
+				// If we were previously bounded by a container but this shape extends outside it,
+				// we're no longer bounded by a container
+				if (isBoundedByContainer && !Box.ContainsApproximately(bbox, maskedPageBounds)) {
+					isBoundedByContainer = false
+				}
+				// Expand the bounding box to include this shape
+				bbox.union(maskedPageBounds)
+			}
+		} else {
+			// First shape sets the initial bounds
+			isBoundedByContainer = isContainer
+			bbox = maskedPageBounds.clone()
+		}
+	}
+
+	// No unmasked shapes to export
+	if (!bbox) return { box: null, paddingApplied: false }
+
+	// Only apply padding if:
+	// - Not exporting a single frame (frames have their own padding rules)
+	// - Not bounded by a container (containers define their own bounds precisely)
+	const paddingApplied = !singleFrameShapeId && !isBoundedByContainer
+	if (paddingApplied) {
+		bbox.expandBy(padding)
+	}
+
+	return { box: bbox, paddingApplied }
 }
 
 function SvgExport({
@@ -128,6 +205,7 @@ function SvgExport({
 	background,
 	singleFrameShapeId,
 	isDarkMode,
+	colorMode,
 	renderingShapes,
 	onMount,
 	waitUntil,
@@ -140,12 +218,13 @@ function SvgExport({
 	background: boolean
 	singleFrameShapeId: TLShapeId | null
 	isDarkMode: boolean
+	colorMode: 'light' | 'dark'
 	renderingShapes: TLRenderingShape[]
 	onMount(): void
 	waitUntil(promise: Promise<void>): void
 }) {
 	const masksId = useUniqueSafeId()
-	const theme = getDefaultColorTheme({ isDarkMode })
+	const theme = editor.getCurrentTheme()
 
 	const stateAtom = useAtom<{
 		defsById: Record<
@@ -179,6 +258,7 @@ function SvgExport({
 	const exportContext = useMemo(
 		(): SvgExportContext => ({
 			isDarkMode,
+			colorMode,
 			waitUntil,
 			addExportDef,
 			scale,
@@ -194,7 +274,7 @@ function SvgExport({
 				})
 			},
 		}),
-		[isDarkMode, waitUntil, addExportDef, scale, pixelRatio, editor]
+		[isDarkMode, colorMode, waitUntil, addExportDef, scale, pixelRatio, editor]
 	)
 
 	const didRenderRef = useRef(false)
@@ -214,7 +294,7 @@ function SvgExport({
 
 					const shape = editor.getShape(id)!
 
-					if (editor.isShapeOfType<TLGroupShape>(shape, 'group')) return []
+					if (editor.isShapeOfType(shape, 'group')) return []
 
 					const elements = []
 					const util = editor.getShapeUtil(shape)
@@ -365,18 +445,22 @@ function SvgExport({
 		onMount()
 	}, [onMount, shapeElements])
 
-	let backgroundColor = background ? theme.background : 'transparent'
+	const colors = theme.colors[colorMode]
+	let backgroundColor = background ? colors.background : 'transparent'
 
 	if (singleFrameShapeId && background) {
 		const frameShapeUtil = editor.getShapeUtil('frame') as any as
 			| undefined
-			| { options: { showColors: boolean } }
+			| {
+					options: {
+						showColors: boolean
+					}
+			  }
 		if (frameShapeUtil?.options.showColors) {
 			const shape = editor.getShape(singleFrameShapeId)! as TLFrameShape
-			const color = theme[shape.props.color]
-			backgroundColor = color.frame.fill
+			backgroundColor = getColorValue(colors, shape.props.color, 'frameFill')
 		} else {
-			backgroundColor = theme.solid
+			backgroundColor = colors.solid
 		}
 	}
 

@@ -1,13 +1,49 @@
-import react from '@vitejs/plugin-react-swc'
+import path from 'path'
+import { fileURLToPath } from 'url'
+import formatjs from '@formatjs/unplugin/vite'
+import react from '@vitejs/plugin-react'
 import { config } from 'dotenv'
-import { defineConfig } from 'vite'
+import { defineConfig, Plugin } from 'vite'
+import { getMultiplayerServerURL } from './scripts/multiplayer-server-url'
+import { thumbnailScreenshotPlugin } from './scripts/vite-thumbnail-screenshot-plugin'
+import { zodLocalePlugin } from './scripts/vite-zod-locale-plugin.js'
+
+export { getMultiplayerServerURL }
 
 config({
 	path: './.env.local',
 })
 
-export function getMultiplayerServerURL() {
-	return process.env.MULTIPLAYER_SERVER?.replace(/^ws/, 'http')
+/**
+ * Plugin to enable SPA fallback for vite preview.
+ * In dev mode, Vite handles SPA routing automatically.
+ * In preview mode, we need to rewrite page-like URLs to /index.html
+ * so the static file server (sirv) serves the SPA entry point.
+ */
+function spaFallbackPlugin(): Plugin {
+	return {
+		name: 'spa-fallback',
+		configurePreviewServer(server) {
+			// This runs BEFORE the static file server (sirv) is added
+			server.middlewares.use((req, res, next) => {
+				const url = req.url || '/'
+				const pathname = url.split('?')[0]
+				const ext = path.extname(pathname)
+
+				// If this looks like a page request (no file extension, not an api call),
+				// rewrite to index.html so sirv serves the SPA.
+				//
+				// The well-known exclusion is not cosmetic: this middleware runs ahead of the proxy, so
+				// without it the MCP server's OAuth metadata URL — extensionless, and not under /api —
+				// would be answered with the SPA's index.html. A client would parse that as a failed
+				// discovery and never find the authorization server, with nothing logged either side.
+				if (!pathname.startsWith('/api') && !pathname.startsWith('/.well-known/') && !ext) {
+					req.url = '/index.html' + (url.includes('?') ? url.substring(url.indexOf('?')) : '')
+				}
+				next()
+			})
+		},
+	}
 }
 
 function urlOrLocalFallback(mode: string, url: string | undefined, localFallbackPort: number) {
@@ -27,8 +63,23 @@ function urlOrLocalFallback(mode: string, url: string | undefined, localFallback
 
 // https://vitejs.dev/config/
 export default defineConfig((env) => ({
-	plugins: [react({ tsDecorators: true })],
+	plugins: [
+		spaFallbackPlugin(),
+		thumbnailScreenshotPlugin(),
+		zodLocalePlugin(fileURLToPath(new URL('./scripts/zod-locales-shim.js', import.meta.url))),
+		react(),
+		formatjs({
+			idInterpolationPattern: '[md5:contenthash:hex:10]',
+			additionalComponentNames: ['F'],
+			ast: true,
+		}),
+	],
 	publicDir: './public',
+	resolve: {
+		alias: {
+			'@formatjs/icu-messageformat-parser': '@formatjs/icu-messageformat-parser/no-parser.js',
+		},
+	},
 	build: {
 		// output source maps to .map files and include //sourceMappingURL comments in JavaScript files
 		// these get uploaded to Sentry and can be used for debugging
@@ -46,9 +97,16 @@ export default defineConfig((env) => ({
 		),
 		'process.env.MULTIPLAYER_SERVER': urlOrLocalFallback(env.mode, getMultiplayerServerURL(), 8787),
 		'process.env.ZERO_SERVER': urlOrLocalFallback(env.mode, process.env.ZERO_SERVER, 4848),
-		'process.env.ASSET_UPLOAD': urlOrLocalFallback(env.mode, process.env.ASSET_UPLOAD, 8788),
-		'process.env.IMAGE_WORKER': urlOrLocalFallback(env.mode, process.env.IMAGE_WORKER, 8786),
+		'process.env.USER_CONTENT_URL': urlOrLocalFallback(
+			env.mode,
+			process.env.USER_CONTENT_URL,
+			8789
+		),
 		'process.env.TLDRAW_ENV': JSON.stringify(process.env.TLDRAW_ENV ?? 'development'),
+		// A monotonic build identifier (epoch ms at build time). Sent as `?v=` on sync websocket
+		// connections so the server can tell how old a client bundle is — parked background tabs
+		// keep running whatever bundle they loaded, potentially for weeks.
+		'process.env.CLIENT_BUILD_TIMESTAMP': JSON.stringify(Date.now().toString()),
 		'process.env.TLDRAW_LICENSE': JSON.stringify(process.env.TLDRAW_LICENSE ?? ''),
 		// Fall back to staging DSN for local develeopment, although you still need to
 		// modify the env check in 'sentry.client.config.ts' to get it reporting errors
@@ -58,7 +116,15 @@ export default defineConfig((env) => ({
 		),
 	},
 	server: {
+		allowedHosts: process.env.VITE_ALLOWED_HOSTS?.split(',').filter(Boolean),
 		proxy: {
+			// OAuth protected resource metadata for the MCP server. Served by the sync worker but
+			// addressed at this origin, because RFC 9728 puts it at the resource's own origin rather than
+			// under its path — the deployed equivalent is the extra route in the worker's wrangler.toml.
+			// Not rewritten: the worker matches this path as-is.
+			'/.well-known/oauth-protected-resource': {
+				target: getMultiplayerServerURL() || 'http://127.0.0.1:8787',
+			},
 			'/api': {
 				target: getMultiplayerServerURL() || 'http://127.0.0.1:8787',
 				rewrite: (path) => path.replace(/^\/api/, ''),
@@ -83,6 +149,18 @@ export default defineConfig((env) => ({
 		},
 		watch: {
 			ignored: ['**/playwright-report/**', '**/test-results/**'],
+		},
+	},
+	preview: {
+		proxy: {
+			// See the dev server proxy above.
+			'/.well-known/oauth-protected-resource': {
+				target: getMultiplayerServerURL() || 'http://127.0.0.1:8787',
+			},
+			'/api': {
+				target: getMultiplayerServerURL() || 'http://127.0.0.1:8787',
+				rewrite: (path) => path.replace(/^\/api/, ''),
+			},
 		},
 	},
 	css: {

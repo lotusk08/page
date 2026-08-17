@@ -1,4 +1,4 @@
-import { stopEventPropagation, tlenv, tltime, useMaybeEditor } from '@tldraw/editor'
+import { tlenv, tltime, useMaybeEditor } from '@tldraw/editor'
 import classNames from 'classnames'
 import * as React from 'react'
 import { TLUiTranslationKey } from '../../hooks/useTranslation/TLUiTranslationKey'
@@ -12,10 +12,13 @@ export interface TLUiInputProps {
 	label?: TLUiTranslationKey | Exclude<string, TLUiTranslationKey>
 	icon?: TLUiIconType | Exclude<string, TLUiIconType>
 	iconLeft?: TLUiIconType | Exclude<string, TLUiIconType>
+	iconLabel?: TLUiTranslationKey | Exclude<string, TLUiTranslationKey>
 	autoFocus?: boolean
 	autoSelect?: boolean
 	children?: React.ReactNode
 	defaultValue?: string
+	/** Maximum number of characters the input will accept. */
+	maxLength?: number
 	placeholder?: string
 	onComplete?(value: string): void
 	onValueChange?(value: string): void
@@ -34,6 +37,7 @@ export interface TLUiInputProps {
 	shouldManuallyMaintainScrollPositionWhenFocused?: boolean
 	value?: string
 	'data-testid'?: string
+	'aria-label'?: string
 }
 
 /** @public @react */
@@ -44,9 +48,11 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 			label,
 			icon,
 			iconLeft,
+			iconLabel,
 			autoSelect = false,
 			autoFocus = false,
 			defaultValue,
+			maxLength,
 			placeholder,
 			onComplete,
 			onValueChange,
@@ -57,6 +63,8 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 			children,
 			value,
 			'data-testid': dataTestId,
+			disabled,
+			'aria-label': ariaLabel,
 		},
 		ref
 	) {
@@ -115,7 +123,7 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 						// `onChange` with a duplicated text value.
 						if (isComposing.current) return
 						e.currentTarget.blur()
-						stopEventPropagation(e)
+						e.stopPropagation()
 						onComplete?.(e.currentTarget.value)
 						break
 					}
@@ -123,7 +131,7 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 						e.currentTarget.value = rInitialValue.current
 						onCancel?.(e.currentTarget.value)
 						e.currentTarget.blur()
-						stopEventPropagation(e)
+						e.stopPropagation()
 						break
 					}
 				}
@@ -144,9 +152,10 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 		const handleCompositionEnd = React.useCallback(() => (isComposing.current = false), [])
 
 		React.useEffect(() => {
-			if (!tlenv.isIos) return
+			if (!tlenv.isIos) return undefined
 
-			const visualViewport = window.visualViewport
+			const win = editor?.getContainerWindow() ?? window
+			const visualViewport = win.visualViewport
 			if (isFocused && shouldManuallyMaintainScrollPositionWhenFocused && visualViewport) {
 				const onViewportChange = () => {
 					rInputRef.current?.scrollIntoView({ block: 'center' })
@@ -169,18 +178,28 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 					visualViewport.removeEventListener('scroll', onViewportChange)
 				}
 			}
+
+			return undefined
 		}, [isFocused, editor, shouldManuallyMaintainScrollPositionWhenFocused])
 
 		return (
 			<div draggable={false} className="tlui-input__wrapper">
 				{children}
 				{label && <label>{msg(label)}</label>}
-				{iconLeft && <TldrawUiIcon icon={iconLeft} className="tlui-icon-left" small />}
+				{iconLeft && (
+					<TldrawUiIcon
+						label={iconLabel ? msg(iconLabel) : ''}
+						icon={iconLeft}
+						className="tlui-icon-left"
+						small
+					/>
+				)}
 				<input
 					ref={rInputRef}
 					className={classNames('tlui-input', className)}
 					type="text"
 					defaultValue={defaultValue}
+					maxLength={maxLength}
 					onKeyDownCapture={handleKeyDownCapture}
 					onChange={handleChange}
 					onFocus={handleFocus}
@@ -188,11 +207,15 @@ export const TldrawUiInput = React.forwardRef<HTMLInputElement, TLUiInputProps>(
 					onCompositionStart={handleCompositionStart}
 					onCompositionEnd={handleCompositionEnd}
 					autoFocus={autoFocus}
+					aria-label={ariaLabel}
 					placeholder={placeholder}
 					value={value}
 					data-testid={dataTestId}
+					disabled={disabled}
 				/>
-				{icon && <TldrawUiIcon icon={icon} small={!!label} />}
+				{icon && (
+					<TldrawUiIcon label={iconLabel ? msg(iconLabel) : ''} icon={icon} small={!!label} />
+				)}
 			</div>
 		)
 	}

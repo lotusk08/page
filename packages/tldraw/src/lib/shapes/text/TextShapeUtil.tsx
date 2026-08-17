@@ -5,44 +5,70 @@ import {
 	Rectangle2d,
 	ShapeUtil,
 	SvgExportContext,
-	TLFontFace,
 	TLGeometryOpts,
 	TLResizeInfo,
 	TLShapeId,
 	TLTextShape,
 	Vec,
 	createComputedCache,
-	getDefaultColorTheme,
+	getColorValue,
 	getFontsFromRichText,
+	isEqual,
 	resizeScaled,
 	textShapeMigrations,
 	textShapeProps,
-	toDomPrecision,
 	toRichText,
+	useColorMode,
 	useEditor,
 } from '@tldraw/editor'
-import isEqual from 'lodash.isequal'
 import { useCallback } from 'react'
 import {
 	renderHtmlFromRichTextForMeasurement,
 	renderPlaintextFromRichText,
 } from '../../utils/text/richText'
+import { FONT_SIZES, TEXT_PROPS, getFontFamily } from '../shared/default-shape-constants'
+import { getThemeFontFaces } from '../shared/defaultFonts'
+import { ShapeOptionsWithDisplayValues, getDisplayValues } from '../shared/getDisplayValues'
 import { RichTextLabel, RichTextSVG } from '../shared/RichTextLabel'
-import { FONT_FAMILIES, FONT_SIZES, TEXT_PROPS } from '../shared/default-shape-constants'
-import { useDefaultColorTheme } from '../shared/useDefaultColorTheme'
+
+// Export-only slack (as a fraction of font size) added around a text shape's advance box in `toSvg`,
+// so italic/cursive glyph ink that spills past the box — side bearings, slanted ascenders — isn't
+// clipped at the <foreignObject> edge on export (#8802). The text still renders in the same place;
+// the export's auto-trim crops the extra room back to the real pixels, so the PNG stays tight. This
+// is deliberately export-only: the shape's geometry (selection, hit-testing, the text-edit cursor)
+// stays the advance box, which is the right box for those.
+const TEXT_EXPORT_INK_MARGIN = 0.3
 
 const sizeCache = createComputedCache(
 	'text size',
 	(editor: Editor, shape: TLTextShape) => {
 		editor.fonts.trackFontsForShape(shape)
-		return getTextSize(editor, shape.props)
+		const util = editor.getShapeUtil(shape) as TextShapeUtil
+		const dv = getDisplayValues(util, shape)
+		return getTextSize(editor, shape.props, dv)
 	},
 	{ areRecordsEqual: (a, b) => a.props === b.props }
 )
 /** @public */
-export interface TextShapeOptions {
+export interface TextShapeUtilDisplayValues {
+	color: string
+	fontFamily: string
+	fontSize: number
+	lineHeight: number
+	fontWeight: string
+	fontStyle: string
+	fontVariant: string
+}
+
+/** @public */
+export interface TextShapeOptions extends ShapeOptionsWithDisplayValues<
+	TLTextShape,
+	TextShapeUtilDisplayValues
+> {
 	/** How much addition padding should be added to the horizontal geometry of the shape when binding to an arrow? */
 	extraArrowHorizontalPadding: number
+	/** Whether to show the outline of the text shape (using the same color as the canvas). This helps with overlapping shapes. It does not show up on Safari, where text outline is a performance issues. */
+	showTextOutline: boolean
 }
 
 /** @public */
@@ -53,6 +79,22 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 
 	override options: TextShapeOptions = {
 		extraArrowHorizontalPadding: 10,
+		showTextOutline: true,
+		getDefaultDisplayValues(_editor, shape, theme, colorMode): TextShapeUtilDisplayValues {
+			const { color, font, size } = shape.props
+			return {
+				color: getColorValue(theme.colors[colorMode], color, 'solid'),
+				fontFamily: getFontFamily(theme, font),
+				fontSize: theme.fontSize * FONT_SIZES[size],
+				lineHeight: theme.lineHeight,
+				fontWeight: TEXT_PROPS.fontWeight,
+				fontStyle: TEXT_PROPS.fontStyle,
+				fontVariant: TEXT_PROPS.fontVariant,
+			}
+		},
+		getCustomDisplayValues(): Partial<TextShapeUtilDisplayValues> {
+			return {}
+		},
 	}
 
 	getDefaultProps(): TLTextShape['props'] {
@@ -78,10 +120,14 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 		const context = opts?.context ?? 'none'
 		return new Rectangle2d({
 			x:
-				(context === '@tldraw/arrow-start' ? -this.options.extraArrowHorizontalPadding : 0) * scale,
+				(context === '@tldraw/arrow-without-arrowhead'
+					? -this.options.extraArrowHorizontalPadding
+					: 0) * scale,
 			width:
 				(width +
-					(context === '@tldraw/arrow-start' ? this.options.extraArrowHorizontalPadding * 2 : 0)) *
+					(context === '@tldraw/arrow-without-arrowhead'
+						? this.options.extraArrowHorizontalPadding * 2
+						: 0)) *
 				scale,
 			height: height * scale,
 			isFilled: true,
@@ -89,7 +135,9 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 		})
 	}
 
-	override getFontFaces(shape: TLTextShape): TLFontFace[] {
+	override getFontFaces(shape: TLTextShape) {
+		const themeFaces = getThemeFontFaces(this.editor.getCurrentTheme(), shape.props.font)
+		if (themeFaces) return themeFaces
 		return getFontsFromRichText(this.editor, shape.props.richText, {
 			family: `tldraw_${shape.props.font}`,
 			weight: 'normal',
@@ -101,23 +149,24 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 		return renderPlaintextFromRichText(this.editor, shape.props.richText)
 	}
 
-	override canEdit() {
+	override canEdit(shape: TLTextShape) {
 		return true
 	}
 
-	override isAspectRatioLocked() {
+	override isAspectRatioLocked(shape: TLTextShape) {
 		return true
 	} // WAIT NO THIS IS HARD CODED IN THE RESIZE HANDLER
 
 	component(shape: TLTextShape) {
 		const {
 			id,
-			props: { font, size, richText, color, scale, textAlign },
+			props: { richText, scale, textAlign },
 		} = shape
 
 		const { width, height } = this.getMinDimensions(shape)
 		const isSelected = shape.id === this.editor.getOnlySelectedShapeId()
-		const theme = useDefaultColorTheme()
+		const colorMode = useColorMode()
+		const dv = getDisplayValues(this, shape, colorMode)
 		const handleKeyDown = useTextShapeKeydownHandler(id)
 
 		return (
@@ -125,16 +174,17 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 				shapeId={id}
 				classNamePrefix="tl-text-shape"
 				type="text"
-				font={font}
-				fontSize={FONT_SIZES[size]}
-				lineHeight={TEXT_PROPS.lineHeight}
-				align={textAlign}
+				fontFamily={dv.fontFamily}
+				fontSize={dv.fontSize}
+				lineHeight={dv.lineHeight}
+				textAlign={textAlign === 'middle' ? 'center' : textAlign}
 				verticalAlign="middle"
 				richText={richText}
-				labelColor={theme[color].solid}
+				labelColor={dv.color}
 				isSelected={isSelected}
 				textWidth={width}
 				textHeight={height}
+				showTextOutline={this.options.showTextOutline}
 				style={{
 					transform: `scale(${scale})`,
 					transformOrigin: 'top left',
@@ -145,11 +195,12 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 		)
 	}
 
-	indicator(shape: TLTextShape) {
+	override getIndicatorPath(shape: TLTextShape): Path2D | undefined {
+		if (shape.props.autoSize && this.editor.getEditingShapeId() === shape.id) return undefined
 		const bounds = this.editor.getShapeGeometry(shape).bounds
-		const editor = useEditor()
-		if (shape.props.autoSize && editor.getEditingShapeId() === shape.id) return null
-		return <rect width={toDomPrecision(bounds.width)} height={toDomPrecision(bounds.height)} />
+		const path = new Path2D()
+		path.rect(0, 0, bounds.width, bounds.height)
+		return path
 	}
 
 	override toSvg(shape: TLTextShape, ctx: SvgExportContext) {
@@ -157,19 +208,30 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 		const width = bounds.width / (shape.props.scale ?? 1)
 		const height = bounds.height / (shape.props.scale ?? 1)
 
-		const theme = getDefaultColorTheme(ctx)
+		const dv = getDisplayValues(this, shape, ctx.colorMode)
 
-		const exportBounds = new Box(0, 0, width, height)
+		// Pad the exported foreignObject by a margin so glyph ink can spill past the advance box
+		// without being clipped at its edge; the text is inset by the same margin so it renders in the
+		// same place, and the export's trim crops the slack back to content. See TEXT_EXPORT_INK_MARGIN.
+		const inkMargin = Math.ceil(dv.fontSize * TEXT_EXPORT_INK_MARGIN)
+		const exportBounds = new Box(
+			-inkMargin,
+			-inkMargin,
+			width + inkMargin * 2,
+			height + inkMargin * 2
+		)
 		return (
 			<RichTextSVG
-				fontSize={FONT_SIZES[shape.props.size]}
-				font={shape.props.font}
-				align={shape.props.textAlign}
+				fontSize={dv.fontSize}
+				fontFamily={dv.fontFamily}
+				lineHeight={dv.lineHeight}
+				textAlign={shape.props.textAlign === 'middle' ? 'center' : shape.props.textAlign}
 				verticalAlign="middle"
 				richText={shape.props.richText}
-				labelColor={theme[shape.props.color].solid}
+				labelColor={dv.color}
 				bounds={exportBounds}
-				padding={0}
+				padding={inkMargin}
+				showTextOutline={this.options.showTextOutline}
 			/>
 		)
 	}
@@ -228,7 +290,8 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 		const boundsA = this.getMinDimensions(prev)
 
 		// Will always be a fresh call to getTextSize
-		const boundsB = getTextSize(this.editor, next.props)
+		const dv = getDisplayValues(this, next)
+		const boundsB = getTextSize(this.editor, next.props, dv)
 
 		const wA = boundsA.width * prev.props.scale
 		const hA = boundsA.height * prev.props.scale
@@ -298,35 +361,30 @@ export class TextShapeUtil extends ShapeUtil<TLTextShape> {
 	// }
 }
 
-function getTextSize(editor: Editor, props: TLTextShape['props']) {
-	const { font, richText, autoSize, size, w } = props
+function getTextSize(editor: Editor, props: TLTextShape['props'], dv: TextShapeUtilDisplayValues) {
+	const { richText, w } = props
 
-	const minWidth = autoSize ? 16 : Math.max(16, w)
-	const fontSize = FONT_SIZES[size]
+	const minWidth = 16
 
-	const cw = autoSize
-		? null
-		: // `measureText` floors the number so we need to do the same here to avoid issues.
-			Math.floor(Math.max(minWidth, w))
+	const maybeFixedWidth = props.autoSize ? null : Math.max(minWidth, Math.floor(w))
 
 	const html = renderHtmlFromRichTextForMeasurement(editor, richText)
 	const result = editor.textMeasure.measureHtml(html, {
-		...TEXT_PROPS,
-		fontFamily: FONT_FAMILIES[font],
-		fontSize: fontSize,
-		maxWidth: cw,
+		lineHeight: dv.lineHeight,
+		fontWeight: dv.fontWeight,
+		fontStyle: dv.fontStyle,
+		padding: '0px',
+		fontFamily: dv.fontFamily,
+		fontSize: dv.fontSize,
+		maxWidth: maybeFixedWidth,
 	})
 
 	// If we're autosizing the measureText will essentially `Math.floor`
 	// the numbers so `19` rather than `19.3`, this means we must +1 to
 	// whatever we get to avoid wrapping.
-	if (autoSize) {
-		result.w += 1
-	}
-
 	return {
-		width: Math.max(minWidth, result.w),
-		height: Math.max(fontSize, result.h),
+		width: maybeFixedWidth ?? Math.max(minWidth, result.w + 1),
+		height: Math.max(dv.fontSize, result.h),
 	}
 }
 

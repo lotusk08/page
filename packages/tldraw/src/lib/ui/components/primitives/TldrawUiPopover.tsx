@@ -1,7 +1,9 @@
 import { useContainer } from '@tldraw/editor'
+import classNames from 'classnames'
 import { Popover as _Popover } from 'radix-ui'
 import React from 'react'
 import { useMenuIsOpen } from '../../hooks/useMenuIsOpen'
+import { useDirection } from '../../hooks/useTranslation/useTranslation'
 
 /** @public */
 export interface TLUiPopoverProps {
@@ -9,15 +11,16 @@ export interface TLUiPopoverProps {
 	open?: boolean
 	children: React.ReactNode
 	onOpenChange?(isOpen: boolean): void
+	className?: string
 }
 
 /** @public @react */
-export function TldrawUiPopover({ id, children, onOpenChange, open }: TLUiPopoverProps) {
+export function TldrawUiPopover({ id, children, onOpenChange, open, className }: TLUiPopoverProps) {
 	const [isOpen, handleOpenChange] = useMenuIsOpen(id, onOpenChange)
 
 	return (
 		<_Popover.Root onOpenChange={handleOpenChange} open={open || isOpen /* allow debugging */}>
-			<div className="tlui-popover">{children}</div>
+			<div className={classNames('tlui-popover', className)}>{children}</div>
 		</_Popover.Root>
 	)
 }
@@ -29,8 +32,9 @@ export interface TLUiPopoverTriggerProps {
 
 /** @public @react */
 export function TldrawUiPopoverTrigger({ children }: TLUiPopoverTriggerProps) {
+	const dir = useDirection()
 	return (
-		<_Popover.Trigger asChild dir="ltr">
+		<_Popover.Trigger asChild dir={dir}>
 			{children}
 		</_Popover.Trigger>
 	)
@@ -43,7 +47,13 @@ export interface TLUiPopoverContentProps {
 	align?: 'start' | 'center' | 'end'
 	alignOffset?: number
 	sideOffset?: number
+	/**
+	 * Minimum distance to keep between the popover and the viewport edge before it
+	 * shifts to stay in view. Defaults to Radix's `0`.
+	 */
+	collisionPadding?: number
 	disableEscapeKeyDown?: boolean
+	autoFocusFirstButton?: boolean
 }
 
 /** @public @react */
@@ -53,9 +63,24 @@ export function TldrawUiPopoverContent({
 	align = 'center',
 	sideOffset = 8,
 	alignOffset = 0,
+	collisionPadding,
 	disableEscapeKeyDown = false,
+	autoFocusFirstButton = true,
 }: TLUiPopoverContentProps) {
 	const container = useContainer()
+	const dir = useDirection()
+	const ref = React.useRef<HTMLDivElement>(null)
+
+	const handleOpenAutoFocus = React.useCallback(() => {
+		if (!autoFocusFirstButton) return
+		const buttons = (ref.current?.querySelectorAll('button:not([disabled])') ?? []) as HTMLElement[]
+		const visibleButtons = [...buttons].filter(
+			(button) => button.offsetWidth || button.offsetHeight
+		)
+		const firstButton = visibleButtons[0]
+		if (firstButton) firstButton.focus()
+	}, [autoFocusFirstButton])
+
 	return (
 		<_Popover.Portal container={container}>
 			<_Popover.Content
@@ -64,7 +89,10 @@ export function TldrawUiPopoverContent({
 				sideOffset={sideOffset}
 				align={align}
 				alignOffset={alignOffset}
-				dir="ltr"
+				collisionPadding={collisionPadding}
+				dir={dir}
+				ref={ref}
+				onOpenAutoFocus={handleOpenAutoFocus}
 				onEscapeKeyDown={(e) => disableEscapeKeyDown && e.preventDefault()}
 			>
 				{children}

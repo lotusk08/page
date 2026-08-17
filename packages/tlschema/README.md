@@ -2,6 +2,14 @@
 
 Type definitions, schema migrations, and other type metadata for the tldraw editor's default persisted data.
 
+## Documentation
+
+Documentation for the most recent release can be found on [tldraw.dev/docs](https://tldraw.dev/docs), including [reference docs](https://tldraw.dev/reference/editor/Editor). Our release notes can be found [here](https://tldraw.dev/releases).
+
+For more agent-friendly docs, see our [LLMs.txt](https://tldraw.dev/llms.txt).
+
+A `DOCS.md` file is included alongside this README in the published package, with detailed API documentation and usage examples.
+
 ## Records
 
 There are three main kinds of types:
@@ -26,7 +34,7 @@ If you are making a change that affects the structure of a record, shape, or ass
 
 If you are making a change that affects the structure of the store (e.g. renaming or deleting a type, consolidating two shape types into one, etc), add your changes in the migrations in `schema.ts`.
 
-After making your changes, add a new version number, using a meaninful name. For example, if you add a new property
+After making your changes, add a new version number, using a meaningful name. For example, if you add a new property
 to the `TLShape` type called `ownerId` that points to a user, you might do this:
 
 In `TLShape.ts`
@@ -80,7 +88,7 @@ You can find tldraw on npm [here](https://www.npmjs.com/package/@tldraw/tldraw?a
 
 ## Contribution
 
-Please see our [contributing guide](https://github.com/tldraw/tldraw/blob/main/CONTRIBUTING.md). Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
+Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
 
 ## Community
 

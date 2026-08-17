@@ -1,6 +1,6 @@
-import { TlaFile, TlaUser } from '@tldraw/dotcom-shared'
-import { ReactNode, createContext, useContext } from 'react'
-import { trackAnalyticsEvent } from '../../utils/trackAnalyticsEvent'
+import { Role, TlaFile, TlaUser } from '@tldraw/dotcom-shared'
+import { createContext, useContext } from 'react'
+import { trackEvent } from '../../utils/analytics'
 import { TldrawAppSessionState } from './local-session-state'
 
 /** @public */
@@ -14,15 +14,27 @@ export type TLAppUiEventSource =
 	| 'file-header'
 	| 'anon-landing-page'
 	| 'anon-top-bar'
+	| 'comments'
 	| 'account-menu'
 	| 'top-bar'
 	| 'legacy-import-button'
 	| 'new-page'
 	| 'app'
+	| 'cookie-settings'
+	| 'dialog'
+	| 'workspace-settings'
 
 /** @public */
 export interface TLAppUiEventMap {
 	'create-file': null
+	'create-workspace': null
+	'rename-workspace': null
+	'delete-workspace': null
+	'leave-workspace': null
+	'remove-workspace-member': null
+	'set-workspace-member-role': { role: Role }
+	'set-workspace-invite-link-enabled': { enabled: boolean }
+	'regenerate-workspace-invite-secret': null
 	'delete-file': null
 	'rename-file': { name: string }
 	'duplicate-file': null
@@ -30,7 +42,6 @@ export interface TLAppUiEventMap {
 	'drop-tldr-file': null
 	'import-tldr-file': null
 	'change-user-name': null
-	'click-watermark': null
 	'open-share-menu': null
 	'change-share-menu-tab': { tab: TldrawAppSessionState['shareMenuActiveTab'] }
 	'copy-share-link': null
@@ -49,18 +60,34 @@ export interface TLAppUiEventMap {
 		background: TlaUser['exportBackground']
 	}
 	'set-shared-link-type': { type: TlaFile['sharedLinkType'] | 'no-access' }
-	'open-url': { url: string }
+	'open-url': { destinationUrl: string }
 	'publish-file': null
 	'unpublish-file': null
 	'copy-publish-link': null
-	'sign-in-clicked': null
-	'sign-up-clicked': null
+	'sign-up-clicked': { ctaMessage: string }
 	'sign-out-clicked': null
 	'learn-more-button': null
 	'sidebar-toggle': { value: boolean }
 	'click-file-link': null
 	'open-preview-sign-up-modal': null
 	'create-user': null
+	'room-size-warning-dialog-shown': null
+	'room-size-limit-dialog-shown': null
+	'accept-workspace-invite': null
+	'set-color-theme': { theme: string }
+	'post-comment': { operation: 'new-thread' | 'reply' }
+	'edit-comment': null
+	'delete-comment': null
+	'delete-comment-thread': null
+	'resolve-comment-thread': { operation: 'resolve' | 'reopen' }
+	'react-to-comment': { operation: 'add' | 'remove' }
+	'open-comment-thread': null
+	'toggle-comments-sidebar': { open: boolean }
+	'toggle-comments-visibility': { hidden: boolean }
+	'set-comments-filter': {
+		filter: 'onlyCurrentPage' | 'onlyMine' | 'onlyUnread' | 'showResolved'
+		value: boolean
+	}
 }
 
 /** @public */
@@ -75,25 +102,10 @@ export type TLAppUiHandler = <T extends keyof TLAppUiEventMap>(
 export type TLAppUiContextType = TLAppUiHandler
 
 /** @internal */
-const defaultEventHandler: TLAppUiContextType = trackAnalyticsEvent
+const defaultEventHandler: TLAppUiContextType = trackEvent
 
 /** @internal */
 export const EventsContext = createContext<TLAppUiContextType>(defaultEventHandler)
-
-/** @public */
-export interface TldrawAppUiEventsProviderProps {
-	onEvent?: TLAppUiHandler
-	children: ReactNode
-}
-
-/** @public @react */
-export function TldrawAppUiEventsProvider({ onEvent, children }: TldrawAppUiEventsProviderProps) {
-	return (
-		<EventsContext.Provider value={onEvent ?? defaultEventHandler}>
-			{children}
-		</EventsContext.Provider>
-	)
-}
 
 /** @public */
 export function useTldrawAppUiEvents(): TLAppUiContextType {

@@ -1,16 +1,16 @@
-import { db } from '@/utils/ContentDatabase'
+import console from 'console'
+import { assertExists, groupBy, objectMapEntries } from '@tldraw/utils'
+import algoliasearch from 'algoliasearch'
+import { config } from 'dotenv'
 import {
 	SearchEntry,
 	SearchEntryWithIndex,
 	SearchIndexName,
 	getSearchIndexName,
 } from '@/utils/algolia'
+import { db } from '@/utils/ContentDatabase'
 import { nicelog } from '@/utils/nicelog'
 import { parseMarkdown } from '@/utils/parse-markdown'
-import { assertExists, groupBy, objectMapEntries } from '@tldraw/utils'
-import algoliasearch from 'algoliasearch'
-import console from 'console'
-import { config } from 'dotenv'
 
 config()
 
@@ -27,24 +27,38 @@ const sectionConfig: Record<string, SearchConfig | null> = {
 		priority: 9,
 		splitHeadings: true,
 	},
+	'sdk-features': {
+		index: 'docs',
+		priority: 9,
+		splitHeadings: true,
+	},
 	examples: {
 		index: 'docs',
 		priority: 8,
 		splitHeadings: false,
 	},
-	reference: {
+	'starter-kits': {
 		index: 'docs',
 		priority: 7,
+		splitHeadings: false,
+	},
+	reference: {
+		index: 'docs',
+		priority: 6,
 		splitHeadings: true,
 		excludeHeadingLevels: [2],
 		formatHeading(article, heading) {
 			return `${article.title}.${heading}`
 		},
 	},
-
+	changelog: {
+		index: 'docs',
+		priority: 5,
+		splitHeadings: false,
+	},
 	releases: {
 		index: 'docs',
-		priority: 6,
+		priority: 5,
 		splitHeadings: false,
 	},
 	community: {

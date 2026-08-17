@@ -5,50 +5,86 @@
 ```ts
 
 import { Editor } from 'tldraw';
-import { Signal } from 'tldraw';
 import { TLAssetStore } from 'tldraw';
+import { TLObjectStoreAccess } from '@tldraw/sync-core';
+import { TLPersistentClientSocket } from '@tldraw/sync-core';
 import { TLPresenceStateInfo } from 'tldraw';
-import { TLPresenceUserInfo } from 'tldraw';
 import { TLStore } from 'tldraw';
 import { TLStoreSchemaOptions } from 'tldraw';
 import { TLStoreWithStatus } from 'tldraw';
+import { TLThemes } from 'tldraw';
+import { TLUser } from 'tldraw';
+import { TLUserStore } from 'tldraw';
 
-// @public (undocumented)
-export type RemoteTLStoreWithStatus = Exclude<TLStoreWithStatus, {
+// @public
+export type RemoteTLStoreWithStatus = (Extract<TLStoreWithStatus, {
+    status: 'synced-remote';
+}> & {
+    readonly objectAccess: TLObjectStoreAccess;
+}) | Exclude<TLStoreWithStatus, {
     status: 'not-synced';
 } | {
     status: 'synced-local';
+} | {
+    status: 'synced-remote';
 }>;
 
 // @public
 export function useSync(opts: UseSyncOptions & TLStoreSchemaOptions): RemoteTLStoreWithStatus;
+
+// @public (undocumented)
+export type UseSyncConnectFn = (query: {
+    sessionId: string;
+    storeId: string;
+}) => TLPersistentClientSocket;
 
 // @public
 export function useSyncDemo(options: UseSyncDemoOptions & TLStoreSchemaOptions): RemoteTLStoreWithStatus;
 
 // @public (undocumented)
 export interface UseSyncDemoOptions {
-    getUserPresence?(store: TLStore, user: TLPresenceUserInfo): null | TLPresenceStateInfo;
+    // Warning: (ae-unresolved-inheritdoc-reference) The @inheritDoc reference could not be resolved: No member was found with name "getUserPresence"
+    //
+    // (undocumented)
+    getUserPresence?(store: TLStore, user: TLUser): null | TLPresenceStateInfo;
     // @internal (undocumented)
     host?: string;
     roomId: string;
-    userInfo?: Signal<TLPresenceUserInfo> | TLPresenceUserInfo;
+    users?: TLUserStore;
 }
 
 // @public
-export interface UseSyncOptions {
+export type UseSyncOptions = UseSyncOptionsWithConnectFn | UseSyncOptionsWithUri;
+
+// @public
+export interface UseSyncOptionsBase {
     assets: TLAssetStore;
-    getUserPresence?(store: TLStore, user: TLPresenceUserInfo): null | TLPresenceStateInfo;
+    getUserPresence?(store: TLStore, user: TLUser): null | TLPresenceStateInfo;
+    onCustomMessageReceived?(data: any): void;
     // @internal (undocumented)
     onMount?(editor: Editor): void;
     // @internal
     roomId?: string;
+    themes?: Partial<TLThemes>;
     // @internal (undocumented)
     trackAnalyticsEvent?(name: string, data: {
         [key: string]: any;
     }): void;
+    users?: TLUserStore;
+}
+
+// @public (undocumented)
+export interface UseSyncOptionsWithConnectFn extends UseSyncOptionsBase {
+    connect: UseSyncConnectFn;
+    // (undocumented)
+    uri?: never;
+}
+
+// @public (undocumented)
+export interface UseSyncOptionsWithUri extends UseSyncOptionsBase {
+    // (undocumented)
+    connect?: never;
     uri: (() => Promise<string> | string) | string;
-    userInfo?: Signal<TLPresenceUserInfo> | TLPresenceUserInfo;
 }
 
 

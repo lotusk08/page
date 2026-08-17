@@ -54,13 +54,8 @@ export const debugFlags = {
 	hideShapes: createDebugValue('hideShapes', { defaults: { all: false } }),
 	editOnType: createDebugValue('editOnType', { defaults: { all: false } }),
 	a11y: createDebugValue('a11y', { defaults: { all: false } }),
+	debugElbowArrows: createDebugValue('debugElbowArrows', { defaults: { all: false } }),
 } as const
-
-declare global {
-	interface Window {
-		tldrawLog(message: any): void
-	}
-}
 
 // --- 2. USE ---
 // In normal code, read from debug flags directly by calling .value on them:
@@ -91,7 +86,8 @@ if (typeof Element !== 'undefined') {
 
 // --- IMPLEMENTATION ---
 // you probably don't need to read this if you're just using the debug values system
-function createDebugValue<T>(
+/** @public */
+export function createDebugValue<T>(
 	name: string,
 	{
 		defaults,
@@ -104,20 +100,6 @@ function createDebugValue<T>(
 		shouldStoreForSession,
 	})
 }
-
-// function createFeatureFlag<T>(
-// 	name: string,
-// 	{
-// 		defaults,
-// 		shouldStoreForSession = true,
-// 	}: { defaults: DebugFlagDefaults<T>; shouldStoreForSession?: boolean }
-// ) {
-// 	return createDebugValueBase({
-// 		name,
-// 		defaults,
-// 		shouldStoreForSession,
-// 	})
-// }
 
 function createDebugValueBase<T>(def: DebugFlagDef<T>): DebugFlag<T> {
 	const defaultValue = getDefaultValue(def)
@@ -149,7 +131,9 @@ function createDebugValueBase<T>(def: DebugFlagDef<T>): DebugFlag<T> {
 		})
 	}
 
-	return Object.assign(valueAtom, def)
+	return Object.assign(valueAtom, def, {
+		reset: () => valueAtom.set(defaultValue),
+	})
 }
 
 function getStoredInitialValue(name: string) {
@@ -190,7 +174,7 @@ function getDefaultValue<T>(def: DebugFlagDef<T>): T {
 	}
 }
 
-/** @internal */
+/** @public */
 export interface DebugFlagDefaults<T> {
 	development?: T
 	staging?: T
@@ -198,12 +182,14 @@ export interface DebugFlagDefaults<T> {
 	all: T
 }
 
-/** @internal */
+/** @public */
 export interface DebugFlagDef<T> {
 	name: string
 	defaults: DebugFlagDefaults<T>
 	shouldStoreForSession: boolean
 }
 
-/** @internal */
-export type DebugFlag<T> = DebugFlagDef<T> & Atom<T>
+/** @public */
+export interface DebugFlag<T> extends DebugFlagDef<T>, Atom<T> {
+	reset(): void
+}

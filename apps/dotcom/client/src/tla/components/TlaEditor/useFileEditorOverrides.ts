@@ -9,12 +9,22 @@ import {
 	serializeTldrawJsonBlob,
 } from 'tldraw'
 import { routes } from '../../../routeDefs'
-import { useHandleUiEvents } from '../../../utils/useHandleUiEvent'
+import { useHandleUiEvents } from '../../../utils/analytics'
 import { useMaybeApp } from '../../hooks/useAppState'
 import { useIntl, useMsg } from '../../utils/i18n'
 import { editorMessages as messages } from './editor-messages'
 
-export async function download(editor: Editor, name: string) {
+/** Triggers a GET to the app file download endpoint; browser shows download immediately with progress. */
+export function downloadAppFile(fileId: string) {
+	const url = `/api/app/file/${fileId}/download`
+	const a = document.createElement('a')
+	a.href = url
+	// meaningful file name is set by Content-Disposition header
+	a.download = ''
+	a.click()
+}
+
+export async function downloadFileFromEditor(editor: Editor, name: string) {
 	const blobToSave = await serializeTldrawJsonBlob(editor)
 	const file = new File([blobToSave], name, { type: 'application/json' })
 	downloadFile(file)
@@ -65,8 +75,12 @@ export function useFileEditorOverrides({ fileSlug }: { fileSlug?: string }) {
 					readonlyOk: true,
 					async onSelect() {
 						trackEvent('download-file', { source: '' })
-						const defaultName = getFileName(editor) + TLDRAW_FILE_EXTENSION
-						await download(editor, defaultName)
+						if (app && fileSlug) {
+							downloadAppFile(fileSlug)
+						} else {
+							const defaultName = getFileName(editor) + TLDRAW_FILE_EXTENSION
+							await downloadFileFromEditor(editor, defaultName)
+						}
 					},
 				}
 
@@ -81,8 +95,8 @@ export function useFileEditorOverrides({ fileSlug }: { fileSlug?: string }) {
 							createSource: window.location.pathname.slice(1),
 						})
 						if (res?.ok) {
-							const { file } = res.value
-							navigate(routes.tlaFile(file.id))
+							const { fileId } = res.value
+							navigate(routes.tlaFile(fileId))
 							trackEvent('create-file', { source: 'legacy-import-button' })
 						}
 					},
@@ -91,7 +105,7 @@ export function useFileEditorOverrides({ fileSlug }: { fileSlug?: string }) {
 				return actions
 			},
 		}
-	}, [app, getFileName, intl, navigate, trackEvent])
+	}, [app, fileSlug, getFileName, intl, navigate, trackEvent])
 
 	return overrides
 }

@@ -1,5 +1,6 @@
 import { UnknownRecord } from '@tldraw/store'
 import { structuredClone } from '@tldraw/utils'
+import { TLSocketClientSentEvent, TLSocketServerSentEvent } from '../lib/protocol'
 import {
 	TLPersistentClientSocket,
 	TLSocketStatusListener,
@@ -7,7 +8,6 @@ import {
 	TLSyncErrorCloseEventReason,
 } from '../lib/TLSyncClient'
 import { TLRoomSocket } from '../lib/TLSyncRoom'
-import { TLSocketClientSentEvent, TLSocketServerSentEvent } from '../lib/protocol'
 import { TestServer } from './TestServer'
 
 export class TestSocketPair<R extends UnknownRecord> {
@@ -26,6 +26,14 @@ export class TestSocketPair<R extends UnknownRecord> {
 		queue.forEach((msg) => {
 			this.didReceiveFromClient?.(msg)
 		})
+	}
+
+	async flushAllEvents() {
+		await Promise.resolve()
+		while (this.getNeedsFlushing()) {
+			this.flushClientSentEvents()
+			this.flushServerSentEvents()
+		}
 	}
 
 	getNeedsFlushing() {
@@ -54,7 +62,7 @@ export class TestSocketPair<R extends UnknownRecord> {
 	}
 	didReceiveFromClient?: (msg: TLSocketClientSentEvent<R>) => void = undefined
 	clientDisconnected?: () => void = undefined
-	clientSocket: TLPersistentClientSocket<R> = {
+	clientSocket: TLPersistentClientSocket<TLSocketClientSentEvent<R>, TLSocketServerSentEvent<R>> = {
 		connectionStatus: 'offline',
 		onStatusChange: (cb) => {
 			this.callbacks.onStatusChange = cb
@@ -68,7 +76,7 @@ export class TestSocketPair<R extends UnknownRecord> {
 				this.callbacks.onReceiveMessage = null
 			}
 		},
-		sendMessage: (msg: TLSocketClientSentEvent<R>) => {
+		sendMessage: (msg) => {
 			if (this.clientSocket.connectionStatus !== 'online') {
 				throw new Error('trying to send before open')
 			}
@@ -79,6 +87,9 @@ export class TestSocketPair<R extends UnknownRecord> {
 			this.disconnect()
 			this.connect()
 		},
+		close: () => {
+			this.disconnect()
+		},
 	}
 
 	callbacks = {
@@ -86,7 +97,7 @@ export class TestSocketPair<R extends UnknownRecord> {
 		onStatusChange: null as null | TLSocketStatusListener,
 	}
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get isConnected() {
 		return this.clientSocket.connectionStatus === 'online'
 	}

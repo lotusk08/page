@@ -1,7 +1,7 @@
 import { TLArrowShape, TLShapeId, Vec, createShapeId } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { getArrowBindings } from '../lib/shapes/arrow/shared'
 import { TestEditor } from './TestEditor'
-import { TL } from './test-jsx'
 
 let editor: TestEditor
 
@@ -31,7 +31,8 @@ it('requires a move to begin drawing', () => {
 	editor.pointerMove(0, 0)
 	editor.pointerDown()
 	editor.pointerMove(2, 0)
-	expect(editor.inputs.isDragging).toBe(false)
+
+	expect(editor.inputs.getIsDragging()).toBe(false)
 })
 
 describe('Making an arrow on the page', () => {
@@ -96,14 +97,14 @@ describe('Making an arrow on the page', () => {
 				type: 'vertex',
 			},
 			{
-				x: 50,
-				y: 0,
-				type: 'virtual',
-			},
-			{
 				x: 100,
 				y: 0,
 				type: 'vertex',
+			},
+			{
+				x: 50,
+				y: 0,
+				type: 'virtual',
 			},
 		])
 	})
@@ -162,6 +163,31 @@ describe('When binding an arrow to a shape', () => {
 		expect(bindings().end).toBeUndefined()
 	})
 
+	it('creates exact bindings when alt key is held', () => {
+		editor.setCurrentTool('arrow')
+		editor.keyDown('Alt')
+		editor.pointerDown(0, 50)
+		editor.pointerMove(100, 50)
+		expect(bindings().end).toMatchObject({
+			toId: ids.box1,
+			props: {
+				isExact: true,
+			},
+		})
+	})
+
+	it('creates non-exact bindings when alt key is not held', () => {
+		editor.setCurrentTool('arrow')
+		editor.pointerDown(0, 50)
+		editor.pointerMove(100, 50)
+		expect(bindings().end).toMatchObject({
+			toId: ids.box1,
+			props: {
+				isExact: false,
+			},
+		})
+	})
+
 	it('does not bind when the shape is locked', () => {
 		editor.toggleLock(editor.getCurrentPageShapes())
 		editor.setCurrentTool('arrow')
@@ -182,7 +208,7 @@ describe('When binding an arrow to a shape', () => {
 
 		editor.keyUp('Control')
 		expect(bindings().end).toBeUndefined() // there's a short delay here, it should still be a point
-		jest.advanceTimersByTime(1000) // once the timer runs out...
+		vi.advanceTimersByTime(1000) // once the timer runs out...
 		expect(bindings().end).toBeDefined()
 
 		editor.keyDown('Control') // no delay when pressing control again though
@@ -190,8 +216,29 @@ describe('When binding an arrow to a shape', () => {
 
 		editor.keyUp('Control')
 		editor.pointerUp()
-		jest.advanceTimersByTime(1000) // once the timer runs out...
+		vi.advanceTimersByTime(1000) // once the timer runs out...
 		expect(bindings().end).toBeUndefined() // still a point because interaction ended before timer ended
+	})
+
+	it('respects shouldIgnoreTargets option when control key is held', () => {
+		// This test verifies that the ctrl key behavior is now driven by the shouldIgnoreTargets option
+		editor.setCurrentTool('arrow')
+		editor.pointerDown(0, 50)
+		editor.pointerMove(100, 50)
+
+		// Initial binding should exist
+		expect(bindings().end).toBeDefined()
+		expect(bindings().end?.toId).toBe(ids.box1)
+
+		// Pressing ctrl should trigger shouldIgnoreTargets and remove binding
+		editor.keyDown('Control')
+		expect(bindings().end).toBeUndefined()
+
+		// Releasing ctrl should restore binding (after timer)
+		editor.keyUp('Control')
+		expect(bindings().end).toBeUndefined() // Still no binding immediately
+		vi.advanceTimersByTime(1000)
+		expect(bindings().end).toBeDefined()
 	})
 })
 
@@ -241,11 +288,13 @@ describe('When shapes are overlapping', () => {
 		editor.pointerDown(0, 50) // over nothing
 		editor.pointerMove(125, 50) // over box1 only
 		expect(bindings().end).toMatchObject({ toId: ids.box1 })
-		editor.pointerMove(175, 50) // box2 is higher but box1 is filled?
+		editor.pointerMove(175, 50) // box2 is higher but box1 is filled, but we're on the edge ofd box 2
+		expect(bindings().end).toMatchObject({ toId: ids.box2 })
+		editor.pointerMove(175, 70) // box2 is higher but box1 is filled, and we're inside of box2
 		expect(bindings().end).toMatchObject({ toId: ids.box1 })
-		editor.pointerMove(225, 50) // box3 is higher
+		editor.pointerMove(225, 70) // box3 is higher
 		expect(bindings().end).toMatchObject({ toId: ids.box3 })
-		editor.pointerMove(275, 50) // box4 is higher but box 3 is filled
+		editor.pointerMove(275, 70) // box4 is higher but box 3 is filled
 		expect(bindings().end).toMatchObject({ toId: ids.box3 })
 	})
 
@@ -257,14 +306,18 @@ describe('When shapes are overlapping', () => {
 		])
 		editor.setCurrentTool('arrow')
 		editor.pointerDown(0, 50)
-		editor.pointerMove(175, 50) // box1 is smaller even though it's behind box2
+		editor.pointerMove(175, 50) // box1 is smaller even though it's behind box2, but we're on the edge of box 2
+		expect(bindings().end).toMatchObject({ toId: ids.box2 })
+		editor.pointerMove(175, 70) // box1 is smaller even though it's behind box2
 		expect(bindings().end).toMatchObject({ toId: ids.box1 })
-		editor.pointerMove(150, 90) // box3 is smaller and at the front
+		editor.pointerMove(150, 90) // box3 is smaller and at the front but we're on the edge of box 2
+		expect(bindings().end).toMatchObject({ toId: ids.box2 })
+		editor.pointerMove(160, 90) // box3 is smaller and at the front and we're in box1 and box 3 and box 2
 		expect(bindings().end).toMatchObject({ toId: ids.box3 })
 		editor.sendToBack([ids.box3])
 		editor.pointerMove(149, 90) // box3 is smaller, even when at the back
 		expect(bindings().end).toMatchObject({ toId: ids.box3 })
-		editor.pointerMove(175, 50)
+		editor.pointerMove(175, 60) // inside of box1 and box 2, but box 1 is smaller
 		expect(bindings().end).toMatchObject({ toId: ids.box1 })
 	})
 })
@@ -333,8 +386,8 @@ describe('When starting an arrow inside of multiple shapes', () => {
 				props: {
 					normalizedAnchor: {
 						// bound to the center, imprecise!
-						x: 0.2,
-						y: 0.2,
+						x: 0.5,
+						y: 0.5,
 					},
 					isPrecise: false,
 				},
@@ -356,7 +409,7 @@ describe('When starting an arrow inside of multiple shapes', () => {
 		editor.pointerDown(20, 20) // upper left
 		expect(editor.getCurrentPageShapes().length).toBe(1)
 		expect(arrow()).toBe(null)
-		jest.advanceTimersByTime(1000)
+		vi.advanceTimersByTime(1000)
 		editor.pointerMove(25, 20)
 		expect(editor.getCurrentPageShapes().length).toBe(2)
 		expect(arrow()).toMatchObject({ x: 20, y: 20 })
@@ -505,8 +558,8 @@ describe('When starting an arrow inside of multiple shapes', () => {
 				toId: ids.box1,
 				props: {
 					normalizedAnchor: {
-						x: 0.25,
-						y: 0.25,
+						x: 0.5,
+						y: 0.5,
 					},
 					isPrecise: false,
 				},
@@ -639,9 +692,9 @@ describe('When binding an arrow to an ancestor', () => {
 
 describe('Moving a bound arrow', () => {
 	function setup() {
-		editor.createShapesFromJsx([
-			<TL.geo id={ids.box1} x={0} y={0} w={200} h={200} />,
-			<TL.geo id={ids.box2} x={300} y={0} w={200} h={200} />,
+		editor.createShapes([
+			{ id: ids.box1, type: 'geo', x: 0, y: 0, props: { w: 200, h: 200 } },
+			{ id: ids.box2, type: 'geo', x: 300, y: 0, props: { w: 200, h: 200 } },
 		])
 	}
 
@@ -713,5 +766,87 @@ describe('Moving a bound arrow', () => {
 		editor.pointerMove(center.x + 50, center.y)
 		expectBound('start', ids.box1)
 		expectBound('end', ids.box2)
+	})
+})
+
+describe('When the bound shape changes geometry', () => {
+	// the local point that a precise binding's anchor maps to within the bound shape's geometry
+	const getAnchorLocalPoint = (toId: TLShapeId, normalizedAnchor: { x: number; y: number }) => {
+		const geometry = editor.getShapeGeometry(editor.getShape(toId)!)
+		const { point, size } = geometry.bounds
+		return Vec.Add(point, Vec.MulV(normalizedAnchor, size))
+	}
+
+	const anchorHitsShape = (toId: TLShapeId, normalizedAnchor: { x: number; y: number }) => {
+		const geometry = editor.getShapeGeometry(editor.getShape(toId)!)
+		return geometry.hitTestPoint(getAnchorLocalPoint(toId, normalizedAnchor), 0, true)
+	}
+
+	beforeEach(() => {
+		editor.createShape({ id: ids.box1, type: 'geo', x: 0, y: 0, props: { w: 100, h: 100 } })
+		editor.createShape({
+			id: ids.arrow1,
+			type: 'arrow',
+			x: 200,
+			y: 50,
+			props: { start: { x: 0, y: 0 }, end: { x: -150, y: 0 } },
+		})
+	})
+
+	const bindArrowEnd = (normalizedAnchor: { x: number; y: number }, isPrecise = true) => {
+		editor.createBinding({
+			type: 'arrow',
+			fromId: ids.arrow1,
+			toId: ids.box1,
+			props: { terminal: 'end', isExact: false, isPrecise, normalizedAnchor, snap: 'none' },
+		})
+	}
+
+	const endBinding = () => getArrowBindings(editor, editor.getShape<TLArrowShape>(ids.arrow1)!).end!
+
+	it('re-snaps a precise anchor that ends up outside the new geometry', () => {
+		// anchor near the top-left corner: inside a rectangle, but outside a triangle
+		bindArrowEnd({ x: 0.05, y: 0.05 })
+		expect(anchorHitsShape(ids.box1, endBinding().props.normalizedAnchor)).toBe(true)
+
+		editor.updateShape({ id: ids.box1, type: 'geo', props: { geo: 'triangle' } })
+
+		// the anchor should have moved...
+		expect(endBinding().props.normalizedAnchor).not.toMatchObject({ x: 0.05, y: 0.05 })
+		// ...to a point that lands on the new triangle geometry
+		expect(anchorHitsShape(ids.box1, endBinding().props.normalizedAnchor)).toBe(true)
+	})
+
+	it('leaves a precise anchor alone when it still hits the new geometry', () => {
+		// the center is inside both a rectangle and an ellipse
+		bindArrowEnd({ x: 0.5, y: 0.5 })
+
+		editor.updateShape({ id: ids.box1, type: 'geo', props: { geo: 'ellipse' } })
+
+		expect(endBinding().props.normalizedAnchor).toMatchObject({ x: 0.5, y: 0.5 })
+	})
+
+	it('does not touch imprecise anchors', () => {
+		// imprecise bindings always point at the center and intersect the edge, so they never float
+		bindArrowEnd({ x: 0.05, y: 0.05 }, false)
+
+		editor.updateShape({ id: ids.box1, type: 'geo', props: { geo: 'triangle' } })
+
+		expect(endBinding().props.normalizedAnchor).toMatchObject({ x: 0.05, y: 0.05 })
+	})
+
+	it('restores the original anchor on undo', () => {
+		bindArrowEnd({ x: 0.05, y: 0.05 })
+
+		editor.markHistoryStoppingPoint()
+		editor.updateShape({ id: ids.box1, type: 'geo', props: { geo: 'triangle' } })
+		const resnapped = endBinding().props.normalizedAnchor
+		expect(resnapped).not.toMatchObject({ x: 0.05, y: 0.05 })
+
+		editor.undo()
+		expect(endBinding().props.normalizedAnchor).toMatchObject({ x: 0.05, y: 0.05 })
+
+		editor.redo()
+		expect(endBinding().props.normalizedAnchor).toMatchObject(resnapped)
 	})
 })

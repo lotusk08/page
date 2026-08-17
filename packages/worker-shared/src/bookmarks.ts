@@ -13,10 +13,47 @@ const queryValidator = T.object({
 
 type UploadImage = (
 	headers: Headers,
-	body: ReadableStream<any> | null,
+	body: ReadableStream | null,
 	objectName: string
 ) => Promise<string>
 
+/**
+ * Handles requests to extract bookmark metadata from a URL, with optional image uploading.
+ *
+ * Extracts metadata including title, description, image, and favicon from a web page.
+ * When `uploadImage` is provided, processes and uploads optimized versions of images
+ * (600px for main image, 64px for favicon) through Cloudflare's image resizing.
+ *
+ * @param options - Configuration object
+ *   - request - The incoming request containing URL query parameter
+ *   - uploadImage - Optional function to upload processed images to storage
+ *     - headers - HTTP headers from the image response
+ *     - body - ReadableStream of the image data
+ *     - objectName - Unique name for the stored object
+ * @returns Promise resolving to a JSON response containing the extracted metadata
+ * @throws StatusError 400 for invalid URLs, 422 for failed URL fetches
+ *
+ * @example
+ * ```ts
+ * // Basic usage without image upload
+ * router.get('/api/bookmark', (request) => {
+ *   return handleExtractBookmarkMetadataRequest({ request })
+ * })
+ *
+ * // With image upload to R2 storage
+ * router.post('/api/bookmark', (request, env) => {
+ *   return handleExtractBookmarkMetadataRequest({
+ *     request,
+ *     uploadImage: async (headers, body, objectName) => {
+ *       await env.ASSETS_BUCKET.put(objectName, body, { httpMetadata: headers })
+ *       return `https://assets.example.com/${objectName}`
+ *     }
+ *   })
+ * })
+ * ```
+ *
+ * @public
+ */
 export async function handleExtractBookmarkMetadataRequest({
 	request,
 	uploadImage,
@@ -79,7 +116,11 @@ async function trySaveImage<const K extends string>(
 		if (!contentType.startsWith('image/')) throw new Error('Not an image')
 
 		const objectName = `bookmark-${key}-${id}`
-		metadata[key] = await uploadImage(imageResponse.headers, imageResponse.body, objectName)
+		metadata[key] = await uploadImage(
+			imageResponse.headers as unknown as Headers,
+			imageResponse.body as unknown as ReadableStream | null,
+			objectName
+		)
 	} catch (error) {
 		console.error(`Error saving ${key}:`, error)
 	}

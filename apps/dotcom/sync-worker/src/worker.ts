@@ -1,62 +1,121 @@
 /// <reference no-default-lib="true"/>
 /// <reference types="@cloudflare/workers-types" />
+import { mustGetQuery } from '@rocicorp/zero'
+import { PushProcessor, handleQueryRequest } from '@rocicorp/zero/server'
+import { zeroPostgresJS } from '@rocicorp/zero/server/adapters/postgresjs'
 import {
+	FILE_PREFIX,
 	READ_ONLY_LEGACY_PREFIX,
 	READ_ONLY_PREFIX,
 	ROOM_OPEN_MODE,
 	ROOM_PREFIX,
+	can,
 	createMutators,
+	queries,
 	schema,
 } from '@tldraw/dotcom-shared'
+import { exhaustiveSwitchError } from '@tldraw/utils'
 import {
+	blockUnknownOrigins,
 	createRouter,
 	createSentry,
 	handleApiRequest,
 	handleUserAssetGet,
+	isAllowedOrigin,
 	notFound,
 } from '@tldraw/worker-shared'
 import { WorkerEntrypoint } from 'cloudflare:workers'
-import { cors, json } from 'itty-router'
-import {
-	PushProcessor,
-	ZQLDatabaseProvider,
-	ZQLPostgresJSAdapter,
-} from '../../../../node_modules/@rocicorp/zero/out/zero/src/pg'
+import { IRequest, cors, json } from 'itty-router'
 import { adminRoutes } from './adminRoutes'
 import { POSTHOG_URL } from './config'
 import { healthCheckRoutes } from './healthCheckRoutes'
-import { makePostgresConnector } from './postgres'
+import { createPostgresConnectionPool } from './postgres'
 import { createRoomSnapshot } from './routes/createRoomSnapshot'
 import { extractBookmarkMetadata } from './routes/extractBookmarkMetadata'
+import { getPierreHistory } from './routes/getPierreHistory'
+import { getPierreHistorySnapshot } from './routes/getPierreHistorySnapshot'
 import { getReadonlySlug } from './routes/getReadonlySlug'
 import { getRoomHistory } from './routes/getRoomHistory'
 import { getRoomHistorySnapshot } from './routes/getRoomHistorySnapshot'
 import { getRoomSnapshot } from './routes/getRoomSnapshot'
+import { getSocialPreview } from './routes/getSocialPreview'
 import { joinExistingRoom } from './routes/joinExistingRoom'
 import { submitFeedback } from './routes/submitFeedback'
+import { acceptInvite } from './routes/tla/acceptInvite'
 import { createFiles } from './routes/tla/createFiles'
 import { forwardRoomRequest } from './routes/tla/forwardRoomRequest'
+import { getInviteInfo } from './routes/tla/getInviteInfo'
+import { getOgImage } from './routes/tla/getOgImage'
 import { getPublishedFile } from './routes/tla/getPublishedFile'
+import { getThumbnailSnapshot } from './routes/tla/getThumbnailSnapshot'
+import { initUser } from './routes/tla/initUser'
+import {
+	MCP_PROTECTED_RESOURCE_METADATA_PATH,
+	getMcpProtectedResourceMetadata,
+	mcpCorsPreflight,
+	withMcpCors,
+} from './routes/tla/mcpAuth'
+import { handleOgImageRenderMessage } from './routes/tla/ogImageQueue'
+import { putThumbnailRenderResult } from './routes/tla/putThumbnailRenderResult'
+import { sharedBoardScreenshotMcp } from './routes/tla/sharedBoardScreenshotMcp'
 import { upload } from './routes/tla/uploads'
 import { testRoutes } from './testRoutes'
-import { Environment, isDebugLogging } from './types'
-import { getLogger, getReplicator, getUserDurableObject } from './utils/durableObjects'
-import { getAuth, requireAuth } from './utils/tla/getAuth'
-export { TLDrawDurableObject } from './TLDrawDurableObject'
+import { Environment, OgImageRenderQueueMessage, QueueMessage, isDebugLogging } from './types'
+import {
+	getFileEffectProcessor,
+	getLogger,
+	getReplicator,
+	getUserDurableObject,
+} from './utils/durableObjects'
+import { getFeatureFlags } from './utils/featureFlags'
+import { getAuth, getZeroAuth, requireAuth } from './utils/tla/getAuth'
+import { getRole } from './utils/tla/getRole'
+export { TLFileDurableObject } from './TLFileDurableObject'
+export { TLFileEffectProcessor } from './TLFileEffectProcessor'
 export { TLLoggerDurableObject } from './TLLoggerDurableObject'
 export { TLPostgresReplicator } from './TLPostgresReplicator'
 export { TLStatsDurableObject } from './TLStatsDurableObject'
 export { TLUserDurableObject } from './TLUserDurableObject'
+// no-op stub. wrangler.toml v1 created TLDrawDurableObject and v10 deletes it.
+// staging/prod still have it in their applied-migration history, so removing
+// this export breaks their deploys (see #8124). preview skips both v1 and v10,
+// so this export is just an unbound class on preview - harmless.
+export class TLDrawDurableObject {}
 
 const { preflight, corsify } = cors({
 	origin: isAllowedOrigin,
 })
 
+const QUEUE_BASE_DELAY = 2
+
 const router = createRouter<Environment>()
+	// The MCP endpoint and its RFC 9728 discovery metadata are registered ahead of both the shared
+	// preflight and the origin check, and answer their own CORS instead — see MCP_CORS_HEADERS for why
+	// an origin allowlist is the wrong gate for a bearer-authenticated endpoint, and what a browser
+	// MCP client got before this.
+	//
+	// `.options` before `.all` so the preflight is answered rather than dispatched into the handler.
+	.options('/app/mcp', mcpCorsPreflight)
+	.options(MCP_PROTECTED_RESOURCE_METADATA_PATH, mcpCorsPreflight)
+	// .all so MCP server can correctly respond to non-post requests with 405
+	.all('/app/mcp', async (req, env, ctx) =>
+		withMcpCors(await sharedBoardScreenshotMcp(req, env, ctx))
+	)
+	// Registered at the origin rather than under /app, because RFC 9728 puts protected resource
+	// metadata at a well-known path derived from the resource's own path — a client looks for exactly
+	// this URL and nowhere else. The /api/* route pattern does not cover it, so wrangler.toml carries
+	// a second route for this prefix; see MCP_PROTECTED_RESOURCE_METADATA_PATH.
+	.get(MCP_PROTECTED_RESOURCE_METADATA_PATH, (req, env) =>
+		withMcpCors(getMcpProtectedResourceMetadata(req, env))
+	)
 	.all('*', preflight)
 	.all('*', blockUnknownOrigins)
 	.post('/snapshots', createRoomSnapshot)
 	.get('/snapshot/:roomId', getRoomSnapshot)
+	// Social preview metadata for board links. Vercel routes social crawlers (by user-agent) here so
+	// the unfurled link preview includes the board's name. See apps/dotcom/client/scripts/build.ts.
+	// Registered with .all because some crawlers probe with HEAD before (or instead of) GET.
+	.all('/app/social-preview/:prefix/:slug', getSocialPreview)
 	.get(`/${ROOM_PREFIX}/:roomId`, (req, env) =>
 		joinExistingRoom(req, env, ROOM_OPEN_MODE.READ_WRITE)
 	)
@@ -66,12 +125,27 @@ const router = createRouter<Environment>()
 	.get(`/${READ_ONLY_PREFIX}/:roomId`, (req, env) =>
 		joinExistingRoom(req, env, ROOM_OPEN_MODE.READ_ONLY)
 	)
-	.get(`/${ROOM_PREFIX}/:roomId/history`, getRoomHistory)
-	.get(`/${ROOM_PREFIX}/:roomId/history/:timestamp`, getRoomHistorySnapshot)
+	.get(`/${ROOM_PREFIX}/:roomId/history`, (req, env) => getRoomHistory(req, env, false))
+	.get(`/${ROOM_PREFIX}/:roomId/history/:timestamp`, (req, env) =>
+		getRoomHistorySnapshot(req, env, false)
+	)
+
+	.get(`/${FILE_PREFIX}/:roomId/history`, (req, env) => getRoomHistory(req, env, true))
+	.get(`/${FILE_PREFIX}/:roomId/history/:timestamp`, (req, env) =>
+		getRoomHistorySnapshot(req, env, true)
+	)
+
+	.get(`/${FILE_PREFIX}/:roomId/pierre-history`, (req, env) => getPierreHistory(req, env, true))
+	.get(`/${FILE_PREFIX}/:roomId/pierre-history/:timestamp`, (req, env) =>
+		getPierreHistorySnapshot(req, env, true)
+	)
+
 	.get('/readonly-slug/:roomId', getReadonlySlug)
 	.get('/unfurl', extractBookmarkMetadata)
 	.post('/unfurl', extractBookmarkMetadata)
 	.post(`/${ROOM_PREFIX}/:roomId/restore`, forwardRoomRequest)
+	.post(`/app/file/:roomId/restore`, forwardRoomRequest)
+	.post(`/app/file/:roomId/pierre-restore`, forwardRoomRequest)
 	.get('/app/:userId/connect', async (req, env) => {
 		// forward req to the user durable object
 		const auth = await getAuth(req, env)
@@ -85,12 +159,27 @@ const router = createRouter<Environment>()
 			return notFound()
 		}
 
+		if (req.params.userId !== auth.userId) return notFound()
 		const stub = getUserDurableObject(env, auth.userId)
 		return stub.fetch(req)
+	})
+	.post('/app/:userId/init', async (req, env) => {
+		// Ensure user exists in DB before Zero can query
+		const auth = await requireAuth(req, env)
+		if (req.params.userId !== auth.userId) return notFound()
+		return initUser(req, env)
 	})
 	.post('/app/tldr', createFiles)
 	.get('/app/replicator-status', async (_, env) => {
 		await getReplicator(env).ping()
+		return new Response('ok')
+	})
+	// Dev/preview only. Wakes the outbox processor: local workerd doesn't fire persisted alarms
+	// for an uninstantiated DO, so without this a restarted dev stack drains nothing until the
+	// first mutation. The dev stack's one-shot wake-outbox process hits this route on startup.
+	.get('/app/outbox-status', async (_, env) => {
+		if (!isDebugLogging(env)) return notFound()
+		await getFileEffectProcessor(env).poke()
 		return new Response('ok')
 	})
 	.get('/app/file/:roomId', (req, env) => {
@@ -99,6 +188,7 @@ const router = createRouter<Environment>()
 		}
 		return notFound()
 	})
+	.get('/app/file/:roomId/download', forwardRoomRequest)
 	.get('/app/publish/:roomId', getPublishedFile)
 	.get('/app/uploads/:objectName', async (request, env, ctx) => {
 		return handleUserAssetGet({
@@ -109,6 +199,8 @@ const router = createRouter<Environment>()
 		})
 	})
 	.post('/app/uploads/:objectName', upload)
+	.get('/app/invite/:token', getInviteInfo)
+	.post('/app/invite/:token/accept', acceptInvite)
 	.all('/app/__test__/*', testRoutes.fetch)
 	.get('/app/__debug-tail', (req, env) => {
 		if (isDebugLogging(env)) {
@@ -130,6 +222,16 @@ const router = createRouter<Environment>()
 		return new Response('Not Found', { status: 404 })
 	})
 	.post('/app/submit-feedback', submitFeedback)
+	.get('/app/feature-flags', getFeatureFlags)
+	// The MCP endpoint and its discovery metadata are registered at the top of this router, ahead of
+	// the origin check. See there.
+	// The board's rendered social preview image, referenced by the og:image tags getSocialPreview
+	// emits. Lives under the social-preview route family so the crawler HTML and its image share one
+	// path prefix. Registered with .all (like the sibling HTML route) so HEAD probes are handled;
+	// getOgImage serves headers only for anything but GET.
+	.all('/app/social-preview/:prefix/:slug/image', getOgImage)
+	.get('/app/thumbnail-render/snapshot', getThumbnailSnapshot)
+	.post('/app/thumbnail-render/result', putThumbnailRenderResult)
 	// end app
 	.all('/ph/*', (req) => {
 		const url = new URL(req.url)
@@ -142,13 +244,39 @@ const router = createRouter<Environment>()
 	})
 	.all('/health-check/*', healthCheckRoutes.fetch)
 	.all('/app/admin/*', adminRoutes.fetch)
-	.post('/app/zero/push', async (req, env) => {
-		const auth = await requireAuth(req, env)
+	.post('/app/zero/mutate', async (req, env, ctx) => {
+		const auth = await getZeroAuth(req, env)
+		if (!auth) {
+			return Response.json({ error: 'Unauthorized' }, { status: 401 })
+		}
 		const processor = new PushProcessor(
-			new ZQLDatabaseProvider(new ZQLPostgresJSAdapter(makePostgresConnector(env)), schema),
+			zeroPostgresJS(schema, env.BOTCOM_POSTGRES_POOLED_CONNECTION_STRING),
 			'debug'
 		)
 		const result = await processor.process(createMutators(auth.userId), req)
+		// Wake the outbox consumer without blocking the response: a poke failure must not 500 a
+		// mutation that already committed, and the singleton DO shouldn't sit on the hot path.
+		ctx.waitUntil(
+			getFileEffectProcessor(env)
+				.poke()
+				.catch((e) => console.error('outbox poke failed', e))
+		)
+		return json(result)
+	})
+	.post('/app/zero/query', async (req, env) => {
+		const auth = await getZeroAuth(req, env)
+		if (!auth) {
+			return Response.json({ error: 'Unauthorized' }, { status: 401 })
+		}
+		const result = await handleQueryRequest({
+			handler: (name, args) => {
+				const query = mustGetQuery(queries, name)
+				return query.fn({ args, ctx: { userId: auth.userId } })
+			},
+			schema,
+			request: req,
+			userID: auth.userId,
+		})
 		return json(result)
 	})
 	.all('*', notFound)
@@ -168,11 +296,17 @@ export default class Worker extends WorkerEntrypoint<Environment> {
 			request,
 			env: this.env,
 			ctx: this.ctx,
-			after: (response) => {
-				const setCookies = response.headers.getAll('set-cookie')
+			after: (response, request) => {
+				// getAll is a Cloudflare-specific method
+				const setCookies = (
+					response.headers as unknown as import('@cloudflare/workers-types').Headers
+				).getAll('set-cookie')
+				// Create a new Response with mutable headers before passing to corsify
+				// to avoid "Can't modify immutable headers" error
+				const mutableResponse = new Response(response.body, response)
 				// unfortunately corsify mishandles the set-cookie header, so
 				// we need to manually add it back in
-				const result = corsify(response)
+				const result = corsify(mutableResponse, request)
 				if ([...setCookies].length === 0) {
 					return result
 				}
@@ -195,40 +329,102 @@ export default class Worker extends WorkerEntrypoint<Environment> {
 			throw err
 		})
 	}
-}
 
-export function isAllowedOrigin(origin: string) {
-	if (!origin) return undefined
-	if (origin === 'http://localhost:3000') return origin
-	if (origin === 'http://localhost:5420') return origin
-	if (origin === 'https://meet.google.com') return origin
-	if (origin.endsWith('.tldraw.com')) return origin
-	if (origin.endsWith('-tldraw.vercel.app')) return origin
-	return undefined
-}
+	// RPC methods — only callable by workers with a service binding, not from the public internet.
 
-async function blockUnknownOrigins(request: Request, env: Environment) {
-	// allow requests for the same origin (new rewrite routing for SPA)
-	if (request.headers.get('sec-fetch-site') === 'same-origin') {
-		return undefined
+	// Validates auth + file write access before the upload is written to R2.
+	async validateUpload(
+		fileId: string,
+		authorizationHeader: string | null
+	): Promise<{ ok: true; userId: string | null } | { ok: false; error: string }> {
+		const db = createPostgresConnectionPool(this.env, 'sync-worker')
+		try {
+			const file = await db
+				.selectFrom('file')
+				.where('id', '=', fileId)
+				.select(['ownerId', 'owningGroupId', 'shared', 'sharedLinkType'])
+				.executeTakeFirst()
+			if (!file) return { ok: false, error: 'File not found' }
+
+			let userId: string | null = null
+			if (authorizationHeader) {
+				const fakeReq = new Request('https://internal', {
+					headers: { Authorization: authorizationHeader },
+				}) as unknown as IRequest
+				const auth = await getAuth(fakeReq, this.env)
+				userId = auth?.userId ?? null
+			}
+
+			const isSharedEdit = file.shared && file.sharedLinkType === 'edit'
+			if (userId && file.ownerId === userId) {
+				// owner
+			} else if (isSharedEdit) {
+				// shared for editing
+			} else if (userId && file.owningGroupId) {
+				const role = await getRole(db, userId, file.owningGroupId)
+				if (!can(role, 'accessFiles')) {
+					return { ok: false, error: 'Forbidden' }
+				}
+			} else {
+				return { ok: false, error: 'Forbidden' }
+			}
+
+			return { ok: true, userId }
+		} finally {
+			await db.destroy()
+		}
 	}
 
-	if (new URL(request.url).pathname === '/auth/callback') {
-		// allow auth callback because we use the special cookie to verify
-		// the request
-		return undefined
+	// Queues the DB association after a successful R2 upload.
+	async confirmUpload(objectName: string, fileId: string, userId: string | null): Promise<void> {
+		await this.env.QUEUE.send({ type: 'asset-upload', objectName, fileId, userId })
 	}
 
-	const origin = request.headers.get('origin')
-
-	// if there's no origin, this cannot be a cross-origin request, so we allow it.
-	if (!origin) return undefined
-
-	if (env.IS_LOCAL !== 'true' && !isAllowedOrigin(origin)) {
-		console.error('Attempting to connect from an invalid origin:', origin, env, request)
-		return new Response('Not allowed', { status: 403 })
+	override async queue(batch: MessageBatch<QueueMessage>): Promise<void> {
+		// The pool is only needed for asset-upload messages, so create it lazily: OG image render
+		// batches should not open database connections they never use.
+		let db: ReturnType<typeof createPostgresConnectionPool> | undefined
+		for (const message of batch.messages) {
+			switch (message.body.type) {
+				case 'og-image-render':
+					try {
+						await handleOgImageRenderMessage(
+							this.env,
+							message as Message<OgImageRenderQueueMessage>,
+							this.ctx
+						)
+					} catch (_e) {
+						// handleOgImageRenderMessage settles the message itself; this guards the batch loop
+						// against an unexpected throw escaping it, so one bad message can't abort processing
+						// of the rest of the batch. Retry is a no-op if the handler already settled.
+						message.retry()
+					}
+					break
+				case 'asset-upload': {
+					const { objectName, fileId, userId } = message.body
+					try {
+						db ??= createPostgresConnectionPool(this.env, 'sync-worker-queue')
+						await db
+							.insertInto('asset')
+							.values({ objectName, fileId, userId })
+							.onConflict((oc) => oc.column('objectName').doNothing())
+							.execute()
+						message.ack()
+					} catch (_e) {
+						message.retry({
+							delaySeconds: QUEUE_BASE_DELAY ** message.attempts,
+						})
+					}
+					break
+				}
+				default:
+					// One shared queue carries every message type, so a newly added type that nobody
+					// handles here would otherwise fall through to whichever branch happens to be last
+					// and be mis-parsed as that type. This makes it a compile error instead. At runtime
+					// it only fires on deploy skew (a producer ahead of this consumer), where throwing
+					// is what we want: the batch is redelivered once the new consumer is live.
+					exhaustiveSwitchError(message.body, 'type')
+			}
+		}
 	}
-
-	// origin doesn't match, so we can continue
-	return undefined
 }

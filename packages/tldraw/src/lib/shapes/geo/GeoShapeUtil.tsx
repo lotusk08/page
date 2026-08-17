@@ -2,68 +2,153 @@
 import {
 	BaseBoxShapeUtil,
 	Box,
+	EMPTY_ARRAY,
 	Editor,
-	Ellipse2d,
-	Geometry2d,
+	GeoShapeGeoStyle,
 	Group2d,
-	HALF_PI,
 	HTMLContainer,
 	HandleSnapGeometry,
-	PI2,
-	Polygon2d,
-	Polyline2d,
 	Rectangle2d,
 	SVGContainer,
-	Stadium2d,
 	SvgExportContext,
-	TLFontFace,
 	TLGeoShape,
 	TLGeoShapeProps,
+	TLMeasureTextOpts,
 	TLResizeInfo,
+	TLShape,
+	TLShapeId,
 	TLShapeUtilCanvasSvgDef,
+	TLShapeUtilConstructor,
 	Vec,
-	exhaustiveSwitchError,
+	VecLike,
+	WeakCache,
+	approximately,
+	areAnglesCompatible,
 	geoShapeMigrations,
 	geoShapeProps,
-	getDefaultColorTheme,
+	getColorValue,
 	getFontsFromRichText,
-	getPolygonVertices,
+	isEqual,
 	lerp,
+	resolveLineHeightPx,
 	toRichText,
+	useColorMode,
 	useValue,
 } from '@tldraw/editor'
-
-import isEqual from 'lodash.isequal'
 import {
 	isEmptyRichText,
 	renderHtmlFromRichTextForMeasurement,
 	renderPlaintextFromRichText,
 } from '../../utils/text/richText'
-import { HyperlinkButton } from '../shared/HyperlinkButton'
-import { RichTextLabel, RichTextSVG } from '../shared/RichTextLabel'
 import {
-	FONT_FAMILIES,
 	LABEL_FONT_SIZES,
 	LABEL_PADDING,
 	STROKE_SIZES,
 	TEXT_PROPS,
+	getFontFamily,
 } from '../shared/default-shape-constants'
+import { DEFAULT_FILL_COLOR_NAMES } from '../shared/defaultFills'
+import { getThemeFontFaces } from '../shared/defaultFonts'
 import { getFillDefForCanvas, getFillDefForExport } from '../shared/defaultStyleDefs'
-import { useDefaultColorTheme } from '../shared/useDefaultColorTheme'
+import { getFlipForResize } from '../shared/flip'
+import { ShapeOptionsWithDisplayValues, getDisplayValues } from '../shared/getDisplayValues'
+import { HyperlinkButton } from '../shared/HyperlinkButton'
+import { RichTextLabel, RichTextSVG } from '../shared/RichTextLabel'
 import { useIsReadyForEditing } from '../shared/useEditablePlainText'
-import { GeoShapeBody } from './components/GeoShapeBody'
+import { useEfficientZoomThreshold } from '../shared/useEfficientZoomThreshold'
+import { GeoShapeBody } from './GeoShapeBody'
 import {
-	cloudOutline,
-	getCloudPath,
-	getEllipseDrawIndicatorPath,
-	getHeartParts,
-	getHeartPath,
-	getRoundedInkyPolygonPath,
-	getRoundedPolygonPoints,
-} from './geo-shape-helpers'
-import { getLines } from './getLines'
+	defaultGeoTypeDefinitions,
+	type GeoTypeDefinition,
+	getGeoShapePath,
+	getGeoTypeDefinition,
+} from './getGeoShapePath'
 
-const MIN_SIZE_WITH_LABEL = 17 * 3
+// imperfect but good enough, should be the width of the W in the font / size combo
+const GEO_SHAPE_MIN_WIDTHS = Object.freeze({
+	s: 12,
+	m: 14,
+	l: 16,
+	xl: 20,
+})
+
+// Extra padding for geo shape labels matches the stroke width
+// Computed dynamically in getDisplayValues via theme.strokeWidth * STROKE_SIZES[size]
+
+const GEO_SHAPE_HORIZONTAL_ALIGNS = Object.freeze({
+	start: 'start',
+	middle: 'center',
+	end: 'end',
+	'start-legacy': 'start',
+	'end-legacy': 'end',
+	'middle-legacy': 'center',
+} as const)
+
+const GEO_SHAPE_VERTICAL_ALIGNS = Object.freeze({
+	start: 'start',
+	middle: 'middle',
+	end: 'end',
+} as const)
+
+const GEO_SHAPE_EMPTY_LABEL_SIZE = Object.freeze({ w: 0, h: 0 })
+
+// Snapshot the built-in geo types at module init so that collision detection
+// in `configure()` only fires against the built-ins, not against keys added
+// by previous `configure()` calls. This lets repeat `configure()` calls reuse
+// the same custom key (e.g. when wrapping/extending the util) without having
+// the entry stripped from `options.customGeoTypes`.
+const BUILTIN_GEO_TYPES: ReadonlySet<string> = new Set(Object.keys(defaultGeoTypeDefinitions))
+
+/** @public */
+export interface GeoShapeUtilDisplayValues {
+	strokeColor: string
+	strokeRoundness: number
+	strokeWidth: number
+	fillColor: string
+	patternFillFallbackColor: string
+	labelColor: string
+	labelFontFamily: string
+	labelFontSize: number
+	labelMinWidth: number
+	labelExtraPadding: number
+	labelLineHeight: number
+	labelFontWeight: string
+	labelFontVariant: string
+	labelFontStyle: string
+	labelHorizontalAlign: 'start' | 'center' | 'end'
+	labelVerticalAlign: 'start' | 'middle' | 'end'
+	labelPadding: number
+	labelEdgeMargin: number
+	minSizeWithLabel: number
+}
+
+/** @public */
+export interface GeoShapeOptions extends ShapeOptionsWithDisplayValues<
+	TLGeoShape,
+	GeoShapeUtilDisplayValues
+> {
+	showTextOutline: boolean
+	/**
+	 * A map of custom geo type definitions. Each key becomes a new value for
+	 * {@link @tldraw/editor#GeoShapeGeoStyle} that can be used in the style panel
+	 * and on shapes. Custom geo types inherit all standard geo shape behavior
+	 * (labels, resizing, styling, etc.).
+	 *
+	 * @example
+	 * ```ts
+	 * const MyGeoShapeUtil = GeoShapeUtil.configure({
+	 *   customGeoTypes: {
+	 *     'my-shape': {
+	 *       getPath: (w, h) => new PathBuilder().moveTo(0, 0).lineTo(w, 0).lineTo(w, h).lineTo(0, h).close(),
+	 *       snapType: 'polygon',
+	 *       icon: 'geo-rectangle',
+	 *     },
+	 *   },
+	 * })
+	 * ```
+	 */
+	customGeoTypes?: Record<string, GeoTypeDefinition>
+}
 
 /** @public */
 export class GeoShapeUtil extends BaseBoxShapeUtil<TLGeoShape> {
@@ -71,7 +156,78 @@ export class GeoShapeUtil extends BaseBoxShapeUtil<TLGeoShape> {
 	static override props = geoShapeProps
 	static override migrations = geoShapeMigrations
 
-	override canEdit() {
+	static override configure<T extends TLShapeUtilConstructor<any, any>>(
+		this: T,
+		options: T extends new (...args: any[]) => { options: infer Options } ? Partial<Options> : never
+	): T {
+		const opts = options as Partial<GeoShapeOptions>
+		if (opts.customGeoTypes) {
+			const validEntries: Array<[string, GeoTypeDefinition]> = []
+			for (const [key, def] of Object.entries(opts.customGeoTypes)) {
+				if (BUILTIN_GEO_TYPES.has(key)) {
+					if (process.env.NODE_ENV !== 'production') {
+						console.warn(
+							`[GeoShapeUtil.configure] customGeoTypes key "${key}" collides with a built-in geo type and will be ignored. Please use a unique name.`
+						)
+					}
+					continue
+				}
+				validEntries.push([key, def])
+			}
+			if (validEntries.length > 0) {
+				GeoShapeGeoStyle.addValues(
+					...(validEntries.map(([k]) => k) as Parameters<typeof GeoShapeGeoStyle.addValues>)
+				)
+			}
+			// Strip colliding entries from the options so runtime lookups (tool
+			// defaultSize, style panel icons, double-click handlers) don't see them.
+			const filtered = { ...opts, customGeoTypes: Object.fromEntries(validEntries) }
+			return super.configure(filtered as unknown as typeof options) as T
+		}
+		return super.configure(options) as T
+	}
+
+	override options: GeoShapeOptions = {
+		showTextOutline: true,
+		getDefaultDisplayValues(_editor, shape, theme, colorMode): GeoShapeUtilDisplayValues {
+			const { color, size, labelColor, fill, align, verticalAlign, font } = shape.props
+			const colors = theme.colors[colorMode]
+
+			return {
+				strokeColor: getColorValue(colors, color, 'solid'),
+				strokeRoundness: theme.strokeWidth * STROKE_SIZES[size] * 2,
+				strokeWidth: theme.strokeWidth * STROKE_SIZES[size],
+				fillColor:
+					fill === 'none'
+						? 'transparent'
+						: fill === 'semi'
+							? colors.solid
+							: getColorValue(colors, color, DEFAULT_FILL_COLOR_NAMES[fill]),
+				patternFillFallbackColor: getColorValue(colors, color, 'semi'),
+				labelColor: getColorValue(colors, labelColor, 'solid'), // todo: separate from the solid color (or create more named colors in the palette so that these could be configured separately)
+				labelFontFamily: getFontFamily(theme, font),
+				labelFontSize: theme.fontSize * LABEL_FONT_SIZES[size],
+				labelMinWidth: GEO_SHAPE_MIN_WIDTHS[size],
+				labelExtraPadding: theme.strokeWidth * STROKE_SIZES[size],
+				labelLineHeight: theme.lineHeight,
+				labelFontWeight: 'normal',
+				labelFontVariant: 'normal',
+				labelFontStyle: 'normal',
+				labelHorizontalAlign: GEO_SHAPE_HORIZONTAL_ALIGNS[align],
+				labelVerticalAlign: GEO_SHAPE_VERTICAL_ALIGNS[verticalAlign],
+				labelPadding: LABEL_PADDING,
+				// Margin between label edge and shape edge (in unscaled units)
+				labelEdgeMargin: 8,
+				// Minimum size of the shape to fit a label, based on font size and padding (in unscaled units)
+				minSizeWithLabel: (LABEL_PADDING + 1) * 3,
+			}
+		},
+		getCustomDisplayValues(_editor, _shape): Partial<GeoShapeUtilDisplayValues> {
+			return {}
+		},
+	}
+
+	override canEdit(shape: TLGeoShape) {
 		return true
 	}
 
@@ -80,300 +236,97 @@ export class GeoShapeUtil extends BaseBoxShapeUtil<TLGeoShape> {
 			w: 100,
 			h: 100,
 			geo: 'rectangle',
+			dash: 'draw',
+			growY: 0,
+			url: '',
+			scale: 1,
+			flipX: false,
+			flipY: false,
+
+			// Text properties
 			color: 'black',
 			labelColor: 'black',
 			fill: 'none',
-			dash: 'draw',
 			size: 'm',
 			font: 'draw',
 			align: 'middle',
 			verticalAlign: 'middle',
-			growY: 0,
-			url: '',
-			scale: 1,
 			richText: toRichText(''),
 		}
 	}
 
 	override getGeometry(shape: TLGeoShape) {
-		const w = Math.max(1, shape.props.w)
-		const h = Math.max(1, shape.props.h + shape.props.growY)
-		const cx = w / 2
-		const cy = h / 2
+		const { props } = shape
+		const { scale } = props
+		const dv = getDisplayValues(this, shape)
+		const path = getGeoShapePath(shape, dv.strokeWidth, this.options.customGeoTypes)
+		const pathGeometry = path.toGeometry()
 
-		const isFilled = shape.props.fill !== 'none'
+		const scaledW = Math.max(1, props.w)
+		const scaledH = Math.max(1, props.h + props.growY)
+		const unscaledShapeW = scaledW / scale
+		const unscaledShapeH = scaledH / scale
 
-		let body: Geometry2d
+		const isEmptyLabel = isEmptyRichText(props.richText)
+		const unscaledLabelSize = isEmptyLabel
+			? GEO_SHAPE_EMPTY_LABEL_SIZE
+			: this.getUnscaledLabelSize(shape)
 
-		switch (shape.props.geo) {
-			case 'cloud': {
-				body = new Polygon2d({
-					points: cloudOutline(w, h, shape.id, shape.props.size, shape.props.scale),
-					isFilled,
-				})
-				break
-			}
-			case 'triangle': {
-				body = new Polygon2d({
-					points: [new Vec(cx, 0), new Vec(w, h), new Vec(0, h)],
-					isFilled,
-				})
-				break
-			}
-			case 'diamond': {
-				body = new Polygon2d({
-					points: [new Vec(cx, 0), new Vec(w, cy), new Vec(cx, h), new Vec(0, cy)],
-					isFilled,
-				})
-				break
-			}
-			case 'pentagon': {
-				body = new Polygon2d({
-					points: getPolygonVertices(w, h, 5),
-					isFilled,
-				})
-				break
-			}
-			case 'hexagon': {
-				body = new Polygon2d({
-					points: getPolygonVertices(w, h, 6),
-					isFilled,
-				})
-				break
-			}
-			case 'octagon': {
-				body = new Polygon2d({
-					points: getPolygonVertices(w, h, 8),
-					isFilled,
-				})
-				break
-			}
-			case 'ellipse': {
-				body = new Ellipse2d({
-					width: w,
-					height: h,
-					isFilled,
-				})
-				break
-			}
-			case 'oval': {
-				body = new Stadium2d({
-					width: w,
-					height: h,
-					isFilled,
-				})
-				break
-			}
-			case 'star': {
-				// Most of this code is to offset the center, a 5 point star
-				// will need to be moved downward because from its center [0,0]
-				// it will have a bigger minY than maxY. This is because it'll
-				// have 2 points at the bottom.
-				const sides = 5
-				const step = PI2 / sides / 2
-				const rightMostIndex = Math.floor(sides / 4) * 2
-				const leftMostIndex = sides * 2 - rightMostIndex
-				const topMostIndex = 0
-				const bottomMostIndex = Math.floor(sides / 2) * 2
-				const maxX = (Math.cos(-HALF_PI + rightMostIndex * step) * w) / 2
-				const minX = (Math.cos(-HALF_PI + leftMostIndex * step) * w) / 2
-
-				const minY = (Math.sin(-HALF_PI + topMostIndex * step) * h) / 2
-				const maxY = (Math.sin(-HALF_PI + bottomMostIndex * step) * h) / 2
-				const diffX = w - Math.abs(maxX - minX)
-				const diffY = h - Math.abs(maxY - minY)
-				const offsetX = w / 2 + minX - (w / 2 - maxX)
-				const offsetY = h / 2 + minY - (h / 2 - maxY)
-
-				const ratio = 1
-				const cx = (w - offsetX) / 2
-				const cy = (h - offsetY) / 2
-				const ox = (w + diffX) / 2
-				const oy = (h + diffY) / 2
-				const ix = (ox * ratio) / 2
-				const iy = (oy * ratio) / 2
-
-				body = new Polygon2d({
-					points: Array.from(Array(sides * 2)).map((_, i) => {
-						const theta = -HALF_PI + i * step
-						return new Vec(
-							cx + (i % 2 ? ix : ox) * Math.cos(theta),
-							cy + (i % 2 ? iy : oy) * Math.sin(theta)
-						)
-					}),
-					isFilled,
-				})
-				break
-			}
-			case 'rhombus': {
-				const offset = Math.min(w * 0.38, h * 0.38)
-				body = new Polygon2d({
-					points: [new Vec(offset, 0), new Vec(w, 0), new Vec(w - offset, h), new Vec(0, h)],
-					isFilled,
-				})
-				break
-			}
-			case 'rhombus-2': {
-				const offset = Math.min(w * 0.38, h * 0.38)
-				body = new Polygon2d({
-					points: [new Vec(0, 0), new Vec(w - offset, 0), new Vec(w, h), new Vec(offset, h)],
-					isFilled,
-				})
-				break
-			}
-			case 'trapezoid': {
-				const offset = Math.min(w * 0.38, h * 0.38)
-				body = new Polygon2d({
-					points: [new Vec(offset, 0), new Vec(w - offset, 0), new Vec(w, h), new Vec(0, h)],
-					isFilled,
-				})
-				break
-			}
-			case 'arrow-right': {
-				const ox = Math.min(w, h) * 0.38
-				const oy = h * 0.16
-				body = new Polygon2d({
-					points: [
-						new Vec(0, oy),
-						new Vec(w - ox, oy),
-						new Vec(w - ox, 0),
-						new Vec(w, h / 2),
-						new Vec(w - ox, h),
-						new Vec(w - ox, h - oy),
-						new Vec(0, h - oy),
-					],
-					isFilled,
-				})
-				break
-			}
-			case 'arrow-left': {
-				const ox = Math.min(w, h) * 0.38
-				const oy = h * 0.16
-				body = new Polygon2d({
-					points: [
-						new Vec(ox, 0),
-						new Vec(ox, oy),
-						new Vec(w, oy),
-						new Vec(w, h - oy),
-						new Vec(ox, h - oy),
-						new Vec(ox, h),
-						new Vec(0, h / 2),
-					],
-					isFilled,
-				})
-				break
-			}
-			case 'arrow-up': {
-				const ox = w * 0.16
-				const oy = Math.min(w, h) * 0.38
-				body = new Polygon2d({
-					points: [
-						new Vec(w / 2, 0),
-						new Vec(w, oy),
-						new Vec(w - ox, oy),
-						new Vec(w - ox, h),
-						new Vec(ox, h),
-						new Vec(ox, oy),
-						new Vec(0, oy),
-					],
-					isFilled,
-				})
-				break
-			}
-			case 'arrow-down': {
-				const ox = w * 0.16
-				const oy = Math.min(w, h) * 0.38
-				body = new Polygon2d({
-					points: [
-						new Vec(ox, 0),
-						new Vec(w - ox, 0),
-						new Vec(w - ox, h - oy),
-						new Vec(w, h - oy),
-						new Vec(w / 2, h),
-						new Vec(0, h - oy),
-						new Vec(ox, h - oy),
-					],
-					isFilled,
-				})
-				break
-			}
-			case 'check-box':
-			case 'x-box':
-			case 'rectangle': {
-				body = new Rectangle2d({
-					width: w,
-					height: h,
-					isFilled,
-				})
-				break
-			}
-			case 'heart': {
-				// kind of expensive (creating the primitives to create a different primitive) but hearts are rare and beautiful things
-				const parts = getHeartParts(w, h)
-				const points = parts.reduce<Vec[]>((acc, part) => {
-					acc.push(...part.vertices)
-					return acc
-				}, [])
-
-				body = new Polygon2d({
-					points,
-					isFilled,
-				})
-				break
-			}
-			default: {
-				exhaustiveSwitchError(shape.props.geo)
-			}
-		}
-
-		const unscaledlabelSize = getUnscaledLabelSize(this.editor, shape)
-		// unscaled w and h
-		const unscaledW = w / shape.props.scale
-		const unscaledH = h / shape.props.scale
-		const unscaledminWidth = Math.min(100, unscaledW / 2)
+		// Calculate minimum label dimensions based on font size and shape size
+		const unscaledMinWidth = Math.min(100, unscaledShapeW / 2)
 		const unscaledMinHeight = Math.min(
-			LABEL_FONT_SIZES[shape.props.size] * TEXT_PROPS.lineHeight + LABEL_PADDING * 2,
-			unscaledH / 2
+			resolveLineHeightPx(dv.labelFontSize, dv.labelLineHeight) + dv.labelPadding * 2,
+			unscaledShapeH / 2
 		)
 
-		const unscaledLabelWidth = Math.min(
-			unscaledW,
-			Math.max(unscaledlabelSize.w, Math.min(unscaledminWidth, Math.max(1, unscaledW - 8)))
+		// Label dimensions: at least the measured size, but constrained to shape bounds
+		const unscaledLabelW = Math.min(
+			unscaledShapeW,
+			Math.max(
+				unscaledLabelSize.w,
+				Math.min(unscaledMinWidth, Math.max(1, unscaledShapeW - dv.labelEdgeMargin))
+			)
 		)
-		const unscaledLabelHeight = Math.min(
-			unscaledH,
-			Math.max(unscaledlabelSize.h, Math.min(unscaledMinHeight, Math.max(1, unscaledH - 8)))
+		const unscaledLabelH = Math.min(
+			unscaledShapeH,
+			Math.max(
+				unscaledLabelSize.h,
+				Math.min(unscaledMinHeight, Math.max(1, unscaledShapeH - dv.labelEdgeMargin))
+			)
 		)
 
-		// not sure if bug
+		// Calculate position based on alignment
+		const unscaledX =
+			dv.labelHorizontalAlign === 'start'
+				? 0
+				: dv.labelHorizontalAlign === 'end'
+					? unscaledShapeW - unscaledLabelW
+					: (unscaledShapeW - unscaledLabelW) / 2
 
-		const lines = getLines(shape.props, STROKE_SIZES[shape.props.size] * shape.props.scale)
-		const edges = lines ? lines.map((line) => new Polyline2d({ points: line })) : []
+		const unscaledY =
+			dv.labelVerticalAlign === 'start'
+				? 0
+				: dv.labelVerticalAlign === 'end'
+					? unscaledShapeH - unscaledLabelH
+					: (unscaledShapeH - unscaledLabelH) / 2
 
-		// todo: use centroid for label position
+		const labelBounds = {
+			x: unscaledX * scale,
+			y: unscaledY * scale,
+			width: unscaledLabelW * scale,
+			height: unscaledLabelH * scale,
+		}
 
 		return new Group2d({
 			children: [
-				body,
+				pathGeometry,
 				new Rectangle2d({
-					x:
-						shape.props.align === 'start'
-							? 0
-							: shape.props.align === 'end'
-								? (unscaledW - unscaledLabelWidth) * shape.props.scale
-								: ((unscaledW - unscaledLabelWidth) / 2) * shape.props.scale,
-					y:
-						shape.props.verticalAlign === 'start'
-							? 0
-							: shape.props.verticalAlign === 'end'
-								? (unscaledH - unscaledLabelHeight) * shape.props.scale
-								: ((unscaledH - unscaledLabelHeight) / 2) * shape.props.scale,
-					width: unscaledLabelWidth * shape.props.scale,
-					height: unscaledLabelHeight * shape.props.scale,
+					...labelBounds,
 					isFilled: true,
 					isLabel: true,
+					excludeFromShapeBounds: true,
+					isEmptyLabel: isEmptyLabel,
 				}),
-				...edges,
 			],
 		})
 	}
@@ -382,41 +335,27 @@ export class GeoShapeUtil extends BaseBoxShapeUtil<TLGeoShape> {
 		const geometry = this.getGeometry(shape)
 		// we only want to snap handles to the outline of the shape - not to its label etc.
 		const outline = geometry.children[0]
-		switch (shape.props.geo) {
-			case 'arrow-down':
-			case 'arrow-left':
-			case 'arrow-right':
-			case 'arrow-up':
-			case 'check-box':
-			case 'diamond':
-			case 'hexagon':
-			case 'octagon':
-			case 'pentagon':
-			case 'rectangle':
-			case 'rhombus':
-			case 'rhombus-2':
-			case 'star':
-			case 'trapezoid':
-			case 'triangle':
-			case 'x-box':
-				// poly-line type shapes hand snap points for each vertex & the center
-				return { outline: outline, points: [...outline.vertices, geometry.bounds.center] }
-			case 'cloud':
-			case 'ellipse':
-			case 'heart':
-			case 'oval':
-				// blobby shapes only have a snap point in their center
-				return { outline: outline, points: [geometry.bounds.center] }
-			default:
-				exhaustiveSwitchError(shape.props.geo)
+		const def = getGeoTypeDefinition(shape.props.geo, this.options.customGeoTypes)
+		if (!def) {
+			throw new Error(`Unknown geo type: ${shape.props.geo}`)
 		}
+		// blobby shapes only snap to the center; polygon shapes snap to vertices + center.
+		if (def.snapType === 'blobby') {
+			return { outline: outline, points: [geometry.bounds.center] }
+		}
+		return { outline: outline, points: [...outline.vertices, geometry.bounds.center] }
 	}
 
 	override getText(shape: TLGeoShape) {
 		return renderPlaintextFromRichText(this.editor, shape.props.richText)
 	}
 
-	override getFontFaces(shape: TLGeoShape): TLFontFace[] {
+	override getFontFaces(shape: TLGeoShape) {
+		if (isEmptyRichText(shape.props.richText)) {
+			return EMPTY_ARRAY
+		}
+		const themeFaces = getThemeFontFaces(this.editor.getCurrentTheme(), shape.props.font)
+		if (themeFaces) return themeFaces
 		return getFontsFromRichText(this.editor, shape.props.richText, {
 			family: `tldraw_${shape.props.font}`,
 			weight: 'normal',
@@ -426,8 +365,6 @@ export class GeoShapeUtil extends BaseBoxShapeUtil<TLGeoShape> {
 
 	component(shape: TLGeoShape) {
 		const { id, type, props } = shape
-		const { fill, font, align, verticalAlign, size, richText } = props
-		const theme = useDefaultColorTheme()
 		const { editor } = this
 		const isOnlySelected = useValue(
 			'isGeoOnlySelected',
@@ -435,90 +372,134 @@ export class GeoShapeUtil extends BaseBoxShapeUtil<TLGeoShape> {
 			[editor]
 		)
 		const isReadyForEditing = useIsReadyForEditing(editor, shape.id)
-		const isEmpty = isEmptyRichText(shape.props.richText)
+		const isForceSolid = useEfficientZoomThreshold(0.25 / shape.props.scale)
+		const colorMode = useColorMode()
+		const dv = getDisplayValues(this, shape, colorMode)
+
+		const { w, h, richText, url } = props
+
+		const isEmpty = isEmptyRichText(richText)
 		const showHtmlContainer = isReadyForEditing || !isEmpty
-		const isForceSolid = useValue('force solid', () => editor.getZoomLevel() < 0.2, [editor])
 
 		return (
 			<>
 				<SVGContainer>
-					<GeoShapeBody shape={shape} shouldScale={true} forceSolid={isForceSolid} />
+					<GeoShapeBody
+						shape={shape}
+						shouldScale={true}
+						forceSolid={isForceSolid}
+						strokeColor={dv.strokeColor}
+						strokeWidth={dv.strokeWidth}
+						fillColor={dv.fillColor}
+						patternFillFallbackColor={dv.patternFillFallbackColor}
+						customGeoTypes={this.options.customGeoTypes}
+					/>
 				</SVGContainer>
 				{showHtmlContainer && (
 					<HTMLContainer
 						style={{
 							overflow: 'hidden',
-							width: shape.props.w,
-							height: shape.props.h + props.growY,
+							width: w,
+							height: h + props.growY,
 						}}
 					>
 						<RichTextLabel
 							shapeId={id}
 							type={type}
-							font={font}
-							fontSize={LABEL_FONT_SIZES[size] * shape.props.scale}
-							lineHeight={TEXT_PROPS.lineHeight}
-							padding={LABEL_PADDING * shape.props.scale}
-							fill={fill}
-							align={align}
-							verticalAlign={verticalAlign}
+							fontFamily={dv.labelFontFamily}
+							fontSize={dv.labelFontSize}
+							lineHeight={dv.labelLineHeight}
+							padding={dv.labelPadding}
+							textAlign={dv.labelHorizontalAlign}
+							verticalAlign={dv.labelVerticalAlign}
 							richText={richText}
 							isSelected={isOnlySelected}
-							labelColor={theme[props.labelColor].solid}
+							labelColor={dv.labelColor}
 							wrap
+							showTextOutline={this.options.showTextOutline}
+							style={
+								shape.props.scale !== 1
+									? {
+											transform: `scale(${shape.props.scale})`,
+											transformOrigin: 'top left',
+											width: shape.props.w / shape.props.scale,
+											height: (shape.props.h + props.growY) / shape.props.scale,
+										}
+									: undefined
+							}
 						/>
 					</HTMLContainer>
 				)}
-				{shape.props.url && <HyperlinkButton url={shape.props.url} />}
+				{url && <HyperlinkButton url={url} />}
 			</>
 		)
 	}
 
-	indicator(shape: TLGeoShape) {
-		const geometry = this.editor.getShapeGeometry(shape)
+	override getIndicatorPath(shape: TLGeoShape): Path2D | undefined {
+		const isForceSolid = this.editor.getEfficientZoomLevel() < 0.25 / shape.props.scale
 
-		const isZoomedOut = useValue('isZoomedOut', () => this.editor.getZoomLevel() < 0.25, [
-			this.editor,
-		])
+		const { dash, scale } = shape.props
+		const dv = getDisplayValues(this, shape)
 
-		const path = getIndicatorPath(shape, geometry, isZoomedOut)
-		return <path d={path} />
+		const path = getGeoShapePath(shape, dv.strokeWidth, this.options.customGeoTypes)
+
+		return path.toPath2D({
+			style: dash === 'draw' ? 'draw' : 'solid',
+			strokeWidth: 1,
+			passes: 1,
+			randomSeed: shape.id,
+			offset: 0,
+			roundness: dv.strokeRoundness * scale,
+			forceSolid: isForceSolid,
+		})
 	}
 
 	override toSvg(shape: TLGeoShape, ctx: SvgExportContext) {
+		const dv = getDisplayValues(this, shape, ctx.colorMode)
+		const { richText, fill, scale, growY, w, h } = shape.props
 		// We need to scale the shape to 1x for export
 		const newShape = {
 			...shape,
 			props: {
 				...shape.props,
-				w: shape.props.w / shape.props.scale,
-				h: shape.props.h / shape.props.scale,
+				w: w / scale,
+				h: (h + growY) / scale,
+				growY: 0, // growY throws off the path calculations, so we set it to 0
 			},
 		}
-		const props = newShape.props
-		ctx.addExportDef(getFillDefForExport(props.fill))
+		ctx.addExportDef(getFillDefForExport(fill))
 
 		let textEl
-		if (!isEmptyRichText(props.richText)) {
-			const theme = getDefaultColorTheme(ctx)
-			const bounds = new Box(0, 0, props.w, props.h + props.growY)
+		if (!isEmptyRichText(richText)) {
+			const bounds = new Box(0, 0, newShape.props.w, (h + growY) / scale)
 			textEl = (
 				<RichTextSVG
-					fontSize={LABEL_FONT_SIZES[props.size]}
-					font={props.font}
-					align={props.align}
-					verticalAlign={props.verticalAlign}
-					richText={props.richText}
-					labelColor={theme[props.labelColor].solid}
+					fontSize={dv.labelFontSize}
+					fontFamily={dv.labelFontFamily}
+					lineHeight={dv.labelLineHeight}
+					textAlign={dv.labelHorizontalAlign}
+					verticalAlign={dv.labelVerticalAlign}
+					labelColor={dv.labelColor}
+					padding={dv.labelPadding}
+					showTextOutline={this.options.showTextOutline}
 					bounds={bounds}
-					padding={LABEL_PADDING * shape.props.scale}
+					richText={richText}
 				/>
 			)
 		}
 
 		return (
 			<>
-				<GeoShapeBody shouldScale={false} shape={newShape} forceSolid={false} />
+				<GeoShapeBody
+					shouldScale={false}
+					shape={newShape}
+					forceSolid={false}
+					strokeColor={dv.strokeColor}
+					strokeWidth={dv.strokeWidth}
+					fillColor={dv.fillColor}
+					patternFillFallbackColor={dv.patternFillFallbackColor}
+					customGeoTypes={this.options.customGeoTypes}
+				/>
 				{textEl}
 			</>
 		)
@@ -532,41 +513,48 @@ export class GeoShapeUtil extends BaseBoxShapeUtil<TLGeoShape> {
 		shape: TLGeoShape,
 		{ handle, newPoint, scaleX, scaleY, initialShape }: TLResizeInfo<TLGeoShape>
 	) {
-		const unscaledInitialW = initialShape.props.w / initialShape.props.scale
-		const unscaledInitialH = initialShape.props.h / initialShape.props.scale
-		const unscaledGrowY = initialShape.props.growY / initialShape.props.scale
+		const unscaledInitial = this.getUnscaledGeoProps(initialShape.props)
 		// use the w/h from props here instead of the initialBounds here,
 		// since cloud shapes calculated bounds can differ from the props w/h.
-		let unscaledW = unscaledInitialW * scaleX
-		let unscaledH = (unscaledInitialH + unscaledGrowY) * scaleY
+		let unscaledW = unscaledInitial.w * scaleX
+		let unscaledH = (unscaledInitial.h + unscaledInitial.growY) * scaleY
 		let overShrinkX = 0
 		let overShrinkY = 0
 
-		const min = MIN_SIZE_WITH_LABEL
+		const dv = getDisplayValues(this, shape)
 
 		if (!isEmptyRichText(shape.props.richText)) {
-			let newW = Math.max(Math.abs(unscaledW), min)
-			let newH = Math.max(Math.abs(unscaledH), min)
+			const absUnscaledW = Math.abs(unscaledW)
+			const absUnscaledH = Math.abs(unscaledH)
+			// Check the batch cache first (set by Resizing.ts during multi-shape resize).
+			// If not cached, measure the label at the constrained target dimensions so text
+			// wrapping is accounted for. We call measureUnscaledLabelSize directly (bypassing
+			// WeakCache) since temp shapes with resize dimensions change every frame.
+			const cached = getBatchLabelSizeCache(this.editor)?.get(shape.id)
+			let unscaledLabelSize: { w: number; h: number }
+			if (cached) {
+				unscaledLabelSize = cached
+			} else {
+				const measureW = Math.max(absUnscaledW, dv.minSizeWithLabel)
+				const measureH = Math.max(absUnscaledH, dv.minSizeWithLabel)
+				unscaledLabelSize = this.measureUnscaledLabelSize({
+					...shape,
+					props: {
+						...shape.props,
+						w: measureW * shape.props.scale,
+						h: measureH * shape.props.scale,
+					},
+				} as TLGeoShape)
+			}
 
-			if (newW < min && newH === min) newW = min
-			if (newW === min && newH < min) newH = min
+			const constrainedW = Math.max(absUnscaledW, unscaledLabelSize.w)
+			const constrainedH = Math.max(absUnscaledH, unscaledLabelSize.h)
 
-			const unscaledLabelSize = getUnscaledLabelSize(this.editor, {
-				...shape,
-				props: {
-					...shape.props,
-					w: newW * shape.props.scale,
-					h: newH * shape.props.scale,
-				},
-			})
+			overShrinkX = constrainedW - absUnscaledW
+			overShrinkY = constrainedH - absUnscaledH
 
-			const nextW = Math.max(Math.abs(unscaledW), unscaledLabelSize.w) * Math.sign(unscaledW)
-			const nextH = Math.max(Math.abs(unscaledH), unscaledLabelSize.h) * Math.sign(unscaledH)
-			overShrinkX = Math.abs(nextW) - Math.abs(unscaledW)
-			overShrinkY = Math.abs(nextH) - Math.abs(unscaledH)
-
-			unscaledW = nextW
-			unscaledH = nextH
+			unscaledW = constrainedW * Math.sign(unscaledW || 1)
+			unscaledH = constrainedH * Math.sign(unscaledH || 1)
 		}
 
 		const scaledW = unscaledW * shape.props.scale
@@ -603,152 +591,116 @@ export class GeoShapeUtil extends BaseBoxShapeUtil<TLGeoShape> {
 				w: Math.max(Math.abs(scaledW), 1),
 				h: Math.max(Math.abs(scaledH), 1),
 				growY: 0,
+				...getFlipForResize(initialShape.props, { scaleX, scaleY }),
 			},
 		}
 	}
 
 	override onBeforeCreate(shape: TLGeoShape) {
-		if (isEmptyRichText(shape.props.richText)) {
-			if (shape.props.growY) {
-				// No text / some growY, set growY to 0
-				return {
-					...shape,
-					props: {
-						...shape.props,
-						growY: 0,
-					},
-				}
-			} else {
-				// No text / no growY, nothing to change
-				return
-			}
+		const { props } = shape
+
+		// No text - ensure growY is 0
+		if (isEmptyRichText(props.richText)) {
+			return props.growY !== 0 ? { ...shape, props: { ...props, growY: 0 } } : undefined
 		}
 
-		const unscaledPrevHeight = shape.props.h / shape.props.scale
-		const unscaledNextHeight = getUnscaledLabelSize(this.editor, shape).h
+		// Has text - calculate growY needed to fit label
+		const unscaledShapeH = props.h / props.scale
+		const unscaledLabelH = this.getUnscaledLabelSize(shape).h
+		const unscaledGrowY = this.calculateGrowY(
+			unscaledShapeH,
+			unscaledLabelH,
+			props.growY / props.scale
+		)
 
-		let growY: number | null = null
-
-		if (unscaledNextHeight > unscaledPrevHeight) {
-			growY = unscaledNextHeight - unscaledPrevHeight
-		} else {
-			if (shape.props.growY) {
-				growY = 0
-			}
-		}
-
-		if (growY !== null) {
+		if (unscaledGrowY !== null) {
 			return {
 				...shape,
-				props: {
-					...shape.props,
-					// scale the growY
-					growY: growY * shape.props.scale,
-				},
+				props: { ...props, growY: unscaledGrowY * props.scale },
 			}
 		}
+
+		return undefined
 	}
 
 	override onBeforeUpdate(prev: TLGeoShape, next: TLGeoShape) {
-		// No change to text, font, or size, no need to update update
+		const { props: prevProps } = prev
+		const { props: nextProps } = next
+
+		// No change to text, font, or size - no update needed
 		if (
-			isEqual(prev.props.richText, next.props.richText) &&
-			prev.props.font === next.props.font &&
-			prev.props.size === next.props.size
+			isEqual(prevProps.richText, nextProps.richText) &&
+			prevProps.font === nextProps.font &&
+			prevProps.size === nextProps.size
 		) {
-			return
+			return undefined
 		}
 
-		// If we got rid of the text, cancel out any growY from the prev text
-		const wasEmpty = isEmptyRichText(prev.props.richText)
-		const isEmpty = isEmptyRichText(next.props.richText)
-		if (!wasEmpty && isEmpty) {
+		const wasEmpty = isEmptyRichText(prevProps.richText)
+		const isEmpty = isEmptyRichText(nextProps.richText)
+
+		// If label is empty and used to be empty, skip label measurement and dimension adjustment
+		if (wasEmpty && isEmpty) {
+			return undefined
+		}
+
+		// Text was removed - reset growY
+		if (isEmpty) {
+			return nextProps.growY !== 0 ? { ...next, props: { ...nextProps, growY: 0 } } : undefined
+		}
+
+		const unscaledPrev = this.getUnscaledGeoProps(prevProps)
+		const unscaledLabelSize = this.getUnscaledLabelSize(next)
+		const { scale } = nextProps
+
+		// Text was added for the first time - expand shape to fit (if wasEmpty and now there's text...
+		// It might be just whitespace but it is faster to assume that it is NOT just whitespace and expand
+		// the shape in either case (a label with just spaces text will be less performant but that's acceptable)
+		if (wasEmpty && !isEmpty) {
+			const expanded = this.expandShapeForFirstLabel(
+				next,
+				unscaledPrev.w,
+				unscaledPrev.h,
+				unscaledLabelSize
+			)
 			return {
 				...next,
 				props: {
-					...next.props,
+					...nextProps,
+					w: expanded.w * scale,
+					h: expanded.h * scale,
 					growY: 0,
 				},
 			}
 		}
 
-		// Get the prev width and height in unscaled values
-		const unscaledPrevWidth = prev.props.w / prev.props.scale
-		const unscaledPrevHeight = prev.props.h / prev.props.scale
-		const unscaledPrevGrowY = prev.props.growY / prev.props.scale
+		// Text was modified - adjust dimensions to fit new label
+		const unscaledNextW = next.props.w / scale
+		const needsWidthExpand = unscaledLabelSize.w > unscaledNextW
+		const unscaledGrowY = this.calculateGrowY(
+			unscaledPrev.h,
+			unscaledLabelSize.h,
+			unscaledPrev.growY
+		)
 
-		// Get the next width and height in unscaled values
-		const unscaledNextLabelSize = getUnscaledLabelSize(this.editor, next)
-
-		// When entering the first character in a label (not pasting in multiple characters...)
-		if (wasEmpty && !isEmpty && renderPlaintextFromRichText(this.editor, next.props.richText)) {
-			let unscaledW = Math.max(unscaledPrevWidth, unscaledNextLabelSize.w)
-			let unscaledH = Math.max(unscaledPrevHeight, unscaledNextLabelSize.h)
-
-			const min = MIN_SIZE_WITH_LABEL
-
-			// If both the width and height were less than the minimum size, make the shape square
-			if (unscaledPrevWidth < min && unscaledPrevHeight < min) {
-				unscaledW = Math.max(unscaledW, min)
-				unscaledH = Math.max(unscaledH, min)
-				unscaledW = Math.max(unscaledW, unscaledH)
-				unscaledH = Math.max(unscaledW, unscaledH)
-			}
-
-			// Don't set a growY—at least, not until we've implemented a growX property
+		if (unscaledGrowY !== null || needsWidthExpand) {
 			return {
 				...next,
 				props: {
-					...next.props,
-					// Scale the results
-					w: unscaledW * next.props.scale,
-					h: unscaledH * next.props.scale,
-					growY: 0,
+					...nextProps,
+					growY: (unscaledGrowY ?? unscaledPrev.growY) * scale,
+					w: Math.max(unscaledNextW, unscaledLabelSize.w) * scale,
 				},
 			}
 		}
 
-		let growY: number | null = null
-
-		if (unscaledNextLabelSize.h > unscaledPrevHeight) {
-			growY = unscaledNextLabelSize.h - unscaledPrevHeight
-		} else {
-			if (unscaledPrevGrowY) {
-				growY = 0
-			}
-		}
-
-		if (growY !== null) {
-			const unscaledNextWidth = next.props.w / next.props.scale
-			return {
-				...next,
-				props: {
-					...next.props,
-					// Scale the results
-					growY: growY * next.props.scale,
-					w: Math.max(unscaledNextWidth, unscaledNextLabelSize.w) * next.props.scale,
-				},
-			}
-		}
-
-		if (unscaledNextLabelSize.w > unscaledPrevWidth) {
-			return {
-				...next,
-				props: {
-					...next.props,
-					// Scale the results
-					w: unscaledNextLabelSize.w * next.props.scale,
-				},
-			}
-		}
-
-		// otherwise, no update needed
+		return undefined
 	}
 
 	override onDoubleClick(shape: TLGeoShape) {
 		// Little easter egg: double-clicking a rectangle / checkbox while
 		// holding alt will toggle between check-box and rectangle
-		if (this.editor.inputs.altKey) {
+		if (this.editor.inputs.getAltKey()) {
 			switch (shape.props.geo) {
 				case 'rectangle': {
 					return {
@@ -769,8 +721,17 @@ export class GeoShapeUtil extends BaseBoxShapeUtil<TLGeoShape> {
 			}
 		}
 
+		const def = getGeoTypeDefinition(shape.props.geo, this.options.customGeoTypes)
+		if (def?.onDoubleClick) {
+			const result = def.onDoubleClick(shape)
+			if (result) {
+				return { ...shape, props: { ...shape.props, ...result.props } }
+			}
+		}
+
 		return
 	}
+
 	override getInterpolatedProps(
 		startShape: TLGeoShape,
 		endShape: TLGeoShape,
@@ -783,98 +744,258 @@ export class GeoShapeUtil extends BaseBoxShapeUtil<TLGeoShape> {
 			scale: lerp(startShape.props.scale, endShape.props.scale, t),
 		}
 	}
+
+	/**
+	 * Get the unscaled dimensions from a geo shape's props
+	 */
+	private getUnscaledGeoProps(props: TLGeoShapeProps) {
+		const { w, h, growY, scale } = props
+		return {
+			w: w / scale,
+			h: h / scale,
+			growY: growY / scale,
+		}
+	}
+
+	/**
+	 * Calculate the growY needed to fit a label within a shape.
+	 * Returns null if no change is needed, otherwise returns the new unscaled growY value.
+	 */
+	private calculateGrowY(
+		unscaledShapeH: number,
+		unscaledLabelH: number,
+		unscaledCurrentGrowY: number
+	): number | null {
+		if (unscaledLabelH > unscaledShapeH) {
+			// Label is taller than shape - need to grow
+			return unscaledLabelH - unscaledShapeH
+		}
+		if (unscaledCurrentGrowY > 0) {
+			// Label fits and we have existing growY - reset it
+			return 0
+		}
+		// No change needed
+		return null
+	}
+
+	/**
+	 * Calculate expanded dimensions when adding a label to a shape for the first time.
+	 * Ensures the shape meets minimum size requirements and is square if originally small.
+	 */
+	private expandShapeForFirstLabel(
+		shape: TLGeoShape,
+		unscaledW: number,
+		unscaledH: number,
+		unscaledLabelSize: { w: number; h: number }
+	): { w: number; h: number } {
+		let w = Math.max(unscaledW, unscaledLabelSize.w)
+		let h = Math.max(unscaledH, unscaledLabelSize.h)
+
+		const dv = getDisplayValues(this, shape)
+
+		// If shape was smaller than min size in both dimensions, make it square
+		if (unscaledW < dv.minSizeWithLabel && unscaledH < dv.minSizeWithLabel) {
+			w = Math.max(w, dv.minSizeWithLabel)
+			h = Math.max(h, dv.minSizeWithLabel)
+			// Make square by using the larger dimension
+			const maxDim = Math.max(w, h)
+			w = maxDim
+			h = maxDim
+		}
+
+		return { w, h }
+	}
+
+	private _labelSizesForGeoCache = new WeakCache<TLGeoShape, { w: number; h: number }>()
+
+	/**
+	 * Get the cached label size for the shape. Don't call with empty rich text.
+	 */
+	private getUnscaledLabelSize(shape: TLGeoShape) {
+		const batchCached = getBatchLabelSizeCache(this.editor)?.get(shape.id)
+		if (batchCached) return batchCached
+
+		return this._labelSizesForGeoCache.get(shape, () => {
+			return this.measureUnscaledLabelSize(shape)
+		})
+	}
+
+	/**
+	 * Expensively measure the unscaled label size for the shape. Avoid using it if we can.
+	 */
+	private measureUnscaledLabelSize(shape: TLGeoShape) {
+		const dv = getDisplayValues(this, shape)
+
+		const html = renderHtmlFromRichTextForMeasurement(this.editor, shape.props.richText)
+
+		const textSize = this.editor.textMeasure.measureHtml(html, {
+			...TEXT_PROPS,
+			fontFamily: dv.labelFontFamily,
+			fontSize: dv.labelFontSize,
+			lineHeight: dv.labelLineHeight,
+			minWidth: dv.labelMinWidth,
+			maxWidth: Math.max(
+				// Guard because a DOM nodes can't be less 0
+				0,
+				// A 'w' width that we're setting as the min-width
+				Math.ceil(dv.labelMinWidth + dv.labelExtraPadding),
+				// The actual text size
+				Math.ceil(shape.props.w / shape.props.scale - dv.labelPadding * 2)
+			),
+		})
+
+		return {
+			w: textSize.w + dv.labelPadding * 2,
+			h: textSize.h + dv.labelPadding * 2,
+		}
+	}
 }
 
-function getUnscaledLabelSize(editor: Editor, shape: TLGeoShape) {
+const MIN_SIZE_WITH_LABEL = (LABEL_PADDING + 1) * 3
+const MIN_WIDTHS = GEO_SHAPE_MIN_WIDTHS
+
+// Per-editor batch cache, set by batchMeasureGeoLabels before the resize loop and cleared after.
+// When set, onResize will use pre-computed label sizes instead of measuring individually.
+// Uses a WeakMap keyed by editor to avoid issues with multiple editors on the same page.
+const _batchLabelSizeCaches = new WeakMap<Editor, Map<TLShapeId, { w: number; h: number }>>()
+
+/** @internal */
+export function setBatchLabelSizeCache(
+	editor: Editor,
+	cache: Map<TLShapeId, { w: number; h: number }> | null
+) {
+	if (cache) {
+		_batchLabelSizeCaches.set(editor, cache)
+	} else {
+		_batchLabelSizeCaches.delete(editor)
+	}
+}
+
+function getBatchLabelSizeCache(editor: Editor) {
+	return _batchLabelSizeCaches.get(editor)
+}
+
+/**
+ * Build the measurement request params (html + opts) for a geo shape's label
+ * without actually performing the measurement. Used by batch measurement.
+ */
+function getGeoLabelMeasurementRequest(
+	editor: Editor,
+	shape: TLGeoShape
+): { html: string; opts: TLMeasureTextOpts } {
 	const { richText, font, size, w } = shape.props
-
-	if (!richText || isEmptyRichText(richText)) {
-		return { w: 0, h: 0 }
-	}
-
-	const minSize = editor.textMeasure.measureText('w', {
-		...TEXT_PROPS,
-		fontFamily: FONT_FAMILIES[font],
-		fontSize: LABEL_FONT_SIZES[size],
-		maxWidth: 100, // ?
-	})
-
-	// TODO: Can I get these from somewhere?
-	const sizes = {
-		s: 2,
-		m: 3.5,
-		l: 5,
-		xl: 10,
-	}
-
+	const theme = editor.getCurrentTheme()
+	const minWidth = MIN_WIDTHS[size]
 	const html = renderHtmlFromRichTextForMeasurement(editor, richText)
-	const textSize = editor.textMeasure.measureHtml(html, {
+	const opts: TLMeasureTextOpts = {
 		...TEXT_PROPS,
-		fontFamily: FONT_FAMILIES[font],
-		fontSize: LABEL_FONT_SIZES[size],
-		minWidth: minSize.w,
+		fontFamily: getFontFamily(theme, font),
+		fontSize: theme.fontSize * LABEL_FONT_SIZES[size],
+		lineHeight: theme.lineHeight,
+		minWidth: minWidth,
 		maxWidth: Math.max(
-			// Guard because a DOM nodes can't be less 0
+			// Guard because a DOM node can't be less than 0
 			0,
 			// A 'w' width that we're setting as the min-width
-			Math.ceil(minSize.w + sizes[size]),
+			Math.ceil(minWidth + theme.strokeWidth * STROKE_SIZES[size]),
 			// The actual text size
 			Math.ceil(w / shape.props.scale - LABEL_PADDING * 2)
 		),
-	})
-
-	return {
-		w: textSize.w + LABEL_PADDING * 2,
-		h: textSize.h + LABEL_PADDING * 2,
 	}
+	return { html, opts }
 }
 
-function getIndicatorPath(shape: TLGeoShape, geometry: Geometry2d, isZoomedOut: boolean) {
-	const { id } = shape
-	const { w, size, geo, dash, scale, growY } = shape.props
-	const strokeWidth = STROKE_SIZES[size]
+/**
+ * Compute the target unscaled width for label measurement during resize.
+ * This replicates the measureW computation from onResize so batch measurement can
+ * build measurement requests without duplicating GeoShapeUtil internals.
+ */
+function getGeoResizeTargetWidth(initialProps: TLGeoShapeProps, scaleX: number): number {
+	const unscaledInitialW = initialProps.w / initialProps.scale
+	const absUnscaledW = Math.abs(unscaledInitialW * scaleX)
+	return Math.max(absUnscaledW, MIN_SIZE_WITH_LABEL)
+}
 
-	const h = shape.props.h + growY
-
-	switch (geo) {
-		case 'ellipse': {
-			if (dash === 'draw') {
-				return getEllipseDrawIndicatorPath(id, w, h, strokeWidth)
-			}
-
-			return geometry.getSvgPathData(true)
+/**
+ * Batch-measure all geo shape labels before the resize loop to avoid layout thrashing.
+ * For each geo shape with a non-empty label that has compatible rotation, compute the
+ * measurement request and batch all measurements in a single DOM pass.
+ * Sets the per-editor batch cache so onResize and getGeometry can use pre-computed sizes.
+ * @internal
+ */
+export function batchMeasureGeoLabels(
+	editor: Editor,
+	shapeSnapshots: Map<
+		TLShapeId,
+		{
+			shape: TLShape
+			pageRotation: number
+			isAspectRatioLocked: boolean
 		}
-		case 'heart': {
-			return getHeartPath(w, h)
+	>,
+	scale: VecLike,
+	selectionRotation: number,
+	isAspectRatioLocked: boolean
+) {
+	const requests: Array<{ id: TLShapeId; html: string; opts: TLMeasureTextOpts }> = []
+
+	for (const [id, snapshot] of shapeSnapshots) {
+		// Only process geo shapes with non-empty text labels
+		if (!editor.isShapeOfType<TLGeoShape>(snapshot.shape, 'geo')) continue
+		const geoShape = snapshot.shape as TLGeoShape
+		if (isEmptyRichText(geoShape.props.richText)) continue
+
+		// Skip unaligned shapes — they take a different resize path (_resizeUnalignedShape)
+		// and won't use the standard onResize, so caching wouldn't help.
+		if (!areAnglesCompatible(snapshot.pageRotation, selectionRotation)) continue
+
+		// Compute the effective scaleX for this shape, replicating Editor.resizeShape logic.
+		// Shapes rotated 90° from the selection axis have their x/y scale swapped.
+		const areWidthAndHeightAlignedWithCorrectAxis = approximately(
+			(snapshot.pageRotation - selectionRotation) % Math.PI,
+			0
+		)
+
+		let effectiveScaleX: number
+		if (isAspectRatioLocked || snapshot.isAspectRatioLocked) {
+			// When aspect ratio is locked, both axes get the same absolute scale
+			const uniformScale = Math.max(Math.abs(scale.x), Math.abs(scale.y))
+			effectiveScaleX = uniformScale
+		} else {
+			effectiveScaleX = Math.abs(areWidthAndHeightAlignedWithCorrectAxis ? scale.x : scale.y)
 		}
-		case 'oval': {
-			return geometry.getSvgPathData(true)
-		}
-		case 'cloud': {
-			return getCloudPath(w, h, id, size, shape.props.scale)
-		}
 
-		default: {
-			const outline =
-				geometry instanceof Group2d ? geometry.children[0].vertices : geometry.vertices
-			let path: string
+		// Compute the target width for measurement (same logic as onResize)
+		const targetW = getGeoResizeTargetWidth(geoShape.props, effectiveScaleX)
 
-			if (dash === 'draw' && !isZoomedOut) {
-				const polygonPoints = getRoundedPolygonPoints(id, outline, 0, strokeWidth * 2 * scale, 1)
-				path = getRoundedInkyPolygonPath(polygonPoints)
-			} else {
-				path = 'M' + outline[0] + 'L' + outline.slice(1) + 'Z'
-			}
+		// Build a temporary shape with the target width for measurement
+		const tempShape = {
+			...geoShape,
+			props: {
+				...geoShape.props,
+				w: targetW * geoShape.props.scale,
+			},
+		} as TLGeoShape
 
-			const lines = getLines(shape.props, strokeWidth)
-
-			if (lines) {
-				for (const [A, B] of lines) {
-					path += `M${A.x},${A.y}L${B.x},${B.y}`
-				}
-			}
-
-			return path
-		}
+		const { html, opts } = getGeoLabelMeasurementRequest(editor, tempShape)
+		requests.push({ id, html, opts })
 	}
+
+	if (requests.length === 0) return
+
+	// Batch measure all labels in one DOM pass
+	const results = editor.textMeasure.measureHtmlBatch(
+		requests.map(({ html, opts }) => ({ html, opts }))
+	)
+
+	// Build the cache map with label sizes (adding padding)
+	const cache = new Map<TLShapeId, { w: number; h: number }>()
+	for (let i = 0; i < requests.length; i++) {
+		cache.set(requests[i].id, {
+			w: results[i].w + LABEL_PADDING * 2,
+			h: results[i].h + LABEL_PADDING * 2,
+		})
+	}
+
+	setBatchLabelSizeCache(editor, cache)
 }

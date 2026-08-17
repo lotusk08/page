@@ -1,15 +1,29 @@
-import { SignInButton } from '@clerk/clerk-react'
+import { CommentsMenuItem } from '@tldraw/commenting'
 import classNames from 'classnames'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import {
+	AccessibilityMenu,
+	ColorSchemeMenu,
 	DefaultPageMenu,
 	EditSubmenu,
 	ExportFileContentSubMenu,
 	ExtrasGroup,
+	InputModeMenu,
+	KeyboardShortcutsMenuItem,
+	LanguageMenu,
 	PreferencesGroup,
+	ToggleDebugModeItem,
+	ToggleDynamicSizeModeItem,
+	ToggleEdgeScrollingItem,
+	ToggleFocusModeItem,
+	ToggleGridItem,
+	TogglePasteAtCursorItem,
 	TldrawUiButton,
 	TldrawUiButtonLabel,
+	ToggleSnapModeItem,
+	ToggleToolLockItem,
+	ToggleWrapModeItem,
 	TldrawUiDropdownMenuContent,
 	TldrawUiDropdownMenuRoot,
 	TldrawUiDropdownMenuTrigger,
@@ -17,26 +31,65 @@ import {
 	TldrawUiMenuActionItem,
 	TldrawUiMenuContextProvider,
 	TldrawUiMenuGroup,
-	ViewSubmenu,
+	TldrawUiMenuSubmenu,
+	ZoomTo100MenuItem,
+	ZoomToFitMenuItem,
+	ZoomToSelectionMenuItem,
+	useDialogs,
 	useEditor,
 	usePassThroughWheelEvents,
 	useValue,
 } from 'tldraw'
 import { useApp, useMaybeApp } from '../../hooks/useAppState'
 import { useCurrentFileId } from '../../hooks/useCurrentFileId'
-import { useIsFileOwner } from '../../hooks/useIsFileOwner'
+import { useIsCommentingEnabled } from '../../hooks/useIsCommentingEnabled'
+import { useHasFileAdminRights } from '../../hooks/useIsFileOwner'
 import { TLAppUiEventSource, useTldrawAppUiEvents } from '../../utils/app-ui-events'
 import { getIsCoarsePointer } from '../../utils/getIsCoarsePointer'
 import { defineMessages, useIntl, useMsg } from '../../utils/i18n'
-import { HelpSubMenu } from '../TlaAppMenuGroup/TlaAppMenuGroup'
-import { TlaFileMenu } from '../TlaFileMenu/TlaFileMenu'
-import { TlaIcon, TlaIconWrapper } from '../TlaIcon/TlaIcon'
+import { TlaSignInDialog } from '../dialogs/TlaSignInDialog'
+import { ExternalLink } from '../ExternalLink/ExternalLink'
+import {
+	CookieConsentMenuItem,
+	GiveUsFeedbackMenuItem,
+	ImportFileActionItem,
+	LegalSummaryMenuItem,
+	UserManualMenuItem,
+	UIThemeSubmenu,
+} from '../menu-items/menu-items'
+import { FileItems, TlaFileMenu } from '../TlaFileMenu/TlaFileMenu'
+import { TlaIcon } from '../TlaIcon/TlaIcon'
+import { TlaLogo } from '../TlaLogo/TlaLogo'
 import { sidebarMessages } from '../TlaSidebar/components/TlaSidebarFileLink'
 import { useRoomInfo } from './TlaEditorTopRightPanel'
 import styles from './top.module.css'
 
+/** tldraw's default View submenu plus a "Comments" show/hide toggle (its own group, only for users
+ *  the commenting flag covers). Rebuilt here because tldraw's `ViewSubmenu` is a fixed component
+ *  with no slot to inject into. */
+function TlaViewSubmenu() {
+	const commentingEnabled = useIsCommentingEnabled()
+	return (
+		<TldrawUiMenuSubmenu id="view" label="menu.view">
+			<TldrawUiMenuGroup id="view-actions">
+				<TldrawUiMenuActionItem actionId="zoom-in" />
+				<TldrawUiMenuActionItem actionId="zoom-out" />
+				<ZoomTo100MenuItem />
+				<ZoomToFitMenuItem />
+				<ZoomToSelectionMenuItem />
+			</TldrawUiMenuGroup>
+			{commentingEnabled && (
+				<TldrawUiMenuGroup id="view-comments">
+					<CommentsMenuItem />
+				</TldrawUiMenuGroup>
+			)}
+		</TldrawUiMenuSubmenu>
+	)
+}
+
 const messages = defineMessages({
 	signIn: { defaultMessage: 'Sign in' },
+	file: { defaultMessage: 'File' },
 	pageMenu: { defaultMessage: 'Page menu' },
 	brand: { defaultMessage: 'tldraw' },
 	untitledProject: { defaultMessage: 'Untitled file' },
@@ -49,8 +102,8 @@ export function TlaEditorTopLeftPanel({ isAnonUser }: { isAnonUser: boolean }) {
 	usePassThroughWheelEvents(ref)
 
 	return (
-		<div ref={ref} className={classNames(styles.topPanelLeft)}>
-			<div className={classNames(styles.topPanelLeftButtons)}>
+		<div ref={ref} className={classNames(styles.topLeftPanel)}>
+			<div className={classNames(styles.topLeftPanelButtons)}>
 				{isAnonUser ? <TlaEditorTopLeftPanelAnonymous /> : <TlaEditorTopLeftPanelSignedIn />}
 			</div>
 		</div>
@@ -59,7 +112,6 @@ export function TlaEditorTopLeftPanel({ isAnonUser }: { isAnonUser: boolean }) {
 
 export function TlaEditorTopLeftPanelAnonymous() {
 	const separator = '/'
-	const brandMsg = useMsg(messages.brand)
 	const pageMenuLbl = useMsg(messages.pageMenu)
 	// GOTCHA: 'anonymous' doesn't always mean logged out
 	// we show this version of the panel for published files as well.
@@ -83,23 +135,25 @@ export function TlaEditorTopLeftPanelAnonymous() {
 
 	return (
 		<>
-			<Link to="/" className={styles.brand}>
-				<TlaIconWrapper data-size="m">
-					<TlaIcon className="tla-tldraw-sidebar-icon" icon="tldraw" />
-				</TlaIconWrapper>
-				<div className={classNames('tla-text_ui__title', 'notranslate')}>{brandMsg}</div>
-			</Link>
+			<ExternalLink
+				to="https://tldraw.dev?utm_source=dotcom&utm_medium=organic&utm_campaign=top-left-logo"
+				eventName="top-left-logo-clicked"
+				aria-label="tldraw.dev"
+				className={styles.topLeftOfflineLogo}
+			>
+				<TlaLogo data-testid="tla-top-left-logo-icon" />
+			</ExternalLink>
 			{anonFileName && (
 				<>
 					<span
-						className={styles.topPanelSeparator}
+						className={styles.topLeftPanelSeparator}
 						// undo nth-last-of-type rule in top.module.css
 						style={{ marginRight: 0 }}
 					>
 						{separator}
 					</span>
-					<div className={classNames(styles.inputWrapper)}>
-						<button className={styles.nameWidthSetter} data-testid="tla-file-name">
+					<div className={classNames(styles.topLeftInputWrapper)}>
+						<button className={styles.topLeftInputNameWidthSetter} data-testid="tla-file-name">
 							{anonFileName.replace(/ /g, '\u00a0')}
 						</button>
 					</div>
@@ -107,31 +161,38 @@ export function TlaEditorTopLeftPanelAnonymous() {
 			)}
 			{hasPages && (
 				<>
-					<span className={styles.topPanelSeparator}>{separator}</span>
+					<span className={styles.topLeftPanelSeparator}>{separator}</span>
 					<DefaultPageMenu />
 				</>
 			)}
 			<TldrawUiDropdownMenuRoot id={`file-menu-anon`}>
 				<TldrawUiMenuContextProvider type="menu" sourceId="dialog">
 					<TldrawUiDropdownMenuTrigger>
-						<button className={styles.linkMenu} title={pageMenuLbl} data-testid="tla-page-menu">
+						<TldrawUiButton
+							type="icon"
+							className={styles.topLeftMainMenuTrigger}
+							tooltip={pageMenuLbl}
+							title={pageMenuLbl}
+							data-testid="tla-main-menu"
+						>
 							<TlaIcon icon="dots-vertical-strong" />
-						</button>
+						</TldrawUiButton>
 					</TldrawUiDropdownMenuTrigger>
 					<TldrawUiDropdownMenuContent side="bottom" align="start" alignOffset={0} sideOffset={0}>
 						<TldrawUiMenuGroup id="basic">
 							<EditSubmenu />
-							<ViewSubmenu />
+							<TlaViewSubmenu />
 							<ExportFileContentSubMenu />
 							<ExtrasGroup />
-						</TldrawUiMenuGroup>
-						<TldrawUiMenuGroup id="download">
 							<TldrawUiMenuActionItem actionId={'save-file-copy'} />
 							{canCopyToApp && <TldrawUiMenuActionItem actionId={'copy-to-my-files'} />}
 						</TldrawUiMenuGroup>
-						<TldrawUiMenuGroup id="preferences">
-							<HelpSubMenu />
-							<PreferencesGroup />
+						<TlaPreferencesGroup />
+						<TldrawUiMenuGroup id="misc">
+							<UserManualMenuItem />
+							<GiveUsFeedbackMenuItem />
+							<LegalSummaryMenuItem />
+							<CookieConsentMenuItem />
 						</TldrawUiMenuGroup>
 						{!app && (
 							<TldrawUiMenuGroup id="signin">
@@ -150,11 +211,12 @@ export function TlaEditorTopLeftPanelSignedIn() {
 	const intl = useIntl()
 	const [isRenaming, setIsRenaming] = useState(false)
 	const pageMenuLbl = useMsg(messages.pageMenu)
+	const fileSubmenuMsg = useMsg(messages.file)
 
 	const isEmbed = !!new URLSearchParams(window.location.search).get('embed')
 
 	const fileSlug = useParams<{ fileSlug: string }>().fileSlug ?? '_not_a_file_' // fall back to a string that will not match any file
-	const isOwner = useIsFileOwner(fileSlug)
+	const isOwner = useHasFileAdminRights(fileSlug)
 
 	const app = useApp()
 	const fileId = useCurrentFileId()!
@@ -206,7 +268,7 @@ export function TlaEditorTopLeftPanelSignedIn() {
 	return (
 		<>
 			{/* spacer for the sidebar toggle button */}
-			{isEmbed ? null : <div style={{ width: 40 }} />}
+			{isEmbed ? null : <div style={{ width: 40, flexShrink: 0 }} />}
 			<TlaFileNameEditor
 				source="file-header"
 				isRenaming={isRenaming}
@@ -214,21 +276,37 @@ export function TlaEditorTopLeftPanelSignedIn() {
 				onChange={isOwner ? handleFileNameChange : undefined}
 				onEnd={handleRenameEnd}
 			/>
-			<span className={styles.topPanelSeparator}>{separator}</span>
+			<span className={styles.topLeftPanelSeparator}>{separator}</span>
 			<DefaultPageMenu />
 			<TlaFileMenu
 				fileId={fileId}
+				workspaceId={null}
 				source="file-header"
 				onRenameAction={handleRenameAction}
 				trigger={
-					<button className={styles.linkMenu} title={pageMenuLbl} data-testid="tla-page-menu">
+					<TldrawUiButton
+						type="icon"
+						className={styles.topLeftMainMenuTrigger}
+						tooltip={pageMenuLbl}
+						title={pageMenuLbl}
+						data-testid="tla-main-menu"
+					>
 						<TlaIcon icon="dots-vertical-strong" />
-					</button>
+					</TldrawUiButton>
 				}
 			>
 				<TldrawUiMenuGroup id="regular-stuff">
+					<TldrawUiMenuSubmenu id="file" label={fileSubmenuMsg}>
+						<FileItems
+							source="file-header"
+							fileId={fileId}
+							onRenameAction={handleRenameAction}
+							workspaceId={null}
+						/>
+						<ImportFileActionItem />
+					</TldrawUiMenuSubmenu>
 					<EditSubmenu />
-					<ViewSubmenu />
+					<TlaViewSubmenu />
 					<ExportFileContentSubMenu />
 					<ExtrasGroup />
 				</TldrawUiMenuGroup>
@@ -272,7 +350,8 @@ function TlaFileNameEditor({
 	const handleEditingEnd = useCallback(() => {
 		if (!onChange) return
 		setIsEditing(false)
-	}, [onChange])
+		onEnd?.()
+	}, [onChange, onEnd])
 
 	const handleEditingComplete = useCallback(
 		(name: string) => {
@@ -293,7 +372,12 @@ function TlaFileNameEditor({
 	}, [isRenaming, isEditing])
 
 	return (
-		<div className={classNames(styles.inputWrapper, onChange && styles.inputWrapperEditable)}>
+		<div
+			className={classNames(
+				styles.topLeftInputWrapper,
+				onChange && styles.topLeftInputWrapperEditable
+			)}
+		>
 			{isEditing ? (
 				<TlaFileNameEditorInput
 					fileName={fileName}
@@ -302,7 +386,7 @@ function TlaFileNameEditor({
 				/>
 			) : (
 				<button
-					className={styles.nameWidthSetter}
+					className={styles.topLeftInputNameWidthSetter}
 					onClick={onChange ? handleEditingStart : undefined}
 					data-testid="tla-file-name"
 				>
@@ -350,7 +434,7 @@ function TlaFileNameEditorInput({
 	return (
 		<>
 			<TldrawUiInput
-				className={styles.nameInput}
+				data-testid="tla-file-name-input"
 				value={temporaryFileName}
 				onValueChange={handleValueChange}
 				onCancel={handleCancel}
@@ -358,23 +442,55 @@ function TlaFileNameEditorInput({
 				autoSelect
 				autoFocus
 			/>
-			<div className={styles.nameWidthSetter}>{temporaryFileName.replace(/ /g, '\u00a0')}</div>
+			<div className={styles.topLeftInputNameWidthSetter}>
+				{temporaryFileName.replace(/ /g, '\u00a0')}
+			</div>
 		</>
 	)
 }
 
 function SignInMenuItem() {
 	const msg = useMsg(messages.signIn)
+	const { addDialog } = useDialogs()
+
 	return (
-		<SignInButton
-			mode="modal"
-			forceRedirectUrl={location.pathname + location.search}
-			signUpForceRedirectUrl={location.pathname + location.search}
+		<TldrawUiButton
+			type="menu"
+			data-testid="tla-sign-in-menu-button"
+			onClick={() => {
+				addDialog({ component: TlaSignInDialog })
+			}}
 		>
-			<TldrawUiButton type="menu" data-testid="tla-sign-in-menu-button">
-				<TldrawUiButtonLabel>{msg}</TldrawUiButtonLabel>
-				<TlaIcon icon="sign-in" />
-			</TldrawUiButton>
-		</SignInButton>
+			<TldrawUiButtonLabel>{msg}</TldrawUiButtonLabel>
+			<TlaIcon icon="sign-in" />
+		</TldrawUiButton>
+	)
+}
+
+function TlaPreferencesGroup() {
+	return (
+		<TldrawUiMenuGroup id="preferences">
+			<TldrawUiMenuSubmenu id="preferences" label="menu.preferences">
+				<TldrawUiMenuGroup id="preferences-actions">
+					<ToggleSnapModeItem />
+					<ToggleToolLockItem />
+					<ToggleGridItem />
+					<ToggleWrapModeItem />
+					<ToggleFocusModeItem />
+					<ToggleEdgeScrollingItem />
+					<ToggleDynamicSizeModeItem />
+					<TogglePasteAtCursorItem />
+					<ToggleDebugModeItem />
+				</TldrawUiMenuGroup>
+				<TldrawUiMenuGroup id="user-interface-submenus">
+					<ColorSchemeMenu />
+					<UIThemeSubmenu />
+					<AccessibilityMenu />
+					<InputModeMenu />
+				</TldrawUiMenuGroup>
+			</TldrawUiMenuSubmenu>
+			<LanguageMenu />
+			<KeyboardShortcutsMenuItem />
+		</TldrawUiMenuGroup>
 	)
 }

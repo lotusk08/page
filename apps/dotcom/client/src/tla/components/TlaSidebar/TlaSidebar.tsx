@@ -1,8 +1,9 @@
-import { memo, useCallback, useEffect, useRef } from 'react'
-import { preventDefault } from 'tldraw'
+import { memo, useCallback, useEffect } from 'react'
+import { tlmenus, useMaybeEditor } from 'tldraw'
+import { useActiveWorkspaceId } from '../../hooks/useActiveWorkspaceId'
+import { useIsCommentingEnabled } from '../../hooks/useIsCommentingEnabled'
 import { useTldrFileDrop } from '../../hooks/useTldrFileDrop'
 import { useTldrawAppUiEvents } from '../../utils/app-ui-events'
-import { F } from '../../utils/i18n'
 import {
 	getIsSidebarOpen,
 	toggleSidebar,
@@ -10,18 +11,22 @@ import {
 	useIsSidebarOpen,
 	useIsSidebarOpenMobile,
 } from '../../utils/local-session-state'
-import { TlaSidebarCookieConsent } from './components/TlaSidebarCookieConsent'
 import { TlaSidebarCreateFileButton } from './components/TlaSidebarCreateFileButton'
+import { TlaSidebarDotDevLink } from './components/TlaSidebarDotDevLink'
+import { TlaSidebarFeedbackButton } from './components/TlaSidebarFeedbackButton'
+import { TlaSidebarNotificationsButton } from './components/TlaSidebarNotificationsButton'
 import { TlaSidebarRecentFiles } from './components/TlaSidebarRecentFiles'
-import { TlaSidebarUserLink } from './components/TlaSidebarUserLink'
+import { TlaUserSettingsMenu } from './components/TlaSidebarUserSettingsMenu'
+import { TlaSidebarWorkspaceActions } from './components/TlaSidebarWorkspaceActions'
 import { TlaSidebarWorkspaceLink } from './components/TlaSidebarWorkspaceLink'
+import { TlaSidebarWorkspaceSwitcher } from './components/TlaSidebarWorkspaceSwitcher'
 import styles from './sidebar.module.css'
 
 export const TlaSidebar = memo(function TlaSidebar() {
 	const isSidebarOpen = useIsSidebarOpen()
 	const isSidebarOpenMobile = useIsSidebarOpenMobile()
-	const sidebarRef = useRef<HTMLDivElement>(null)
 	const trackEvent = useTldrawAppUiEvents()
+	const editor = useMaybeEditor()
 
 	useEffect(() => {
 		function handleKeyDown(e: KeyboardEvent) {
@@ -39,33 +44,30 @@ export const TlaSidebar = memo(function TlaSidebar() {
 		}
 	}, [trackEvent])
 
-	useEffect(() => {
-		const sidebarEl = sidebarRef.current
-		if (!sidebarEl) return
-
-		function handleWheel(e: WheelEvent) {
-			if (!sidebarEl) return
-			// Ctrl/Meta key indicates a pinch event (funny, eh?)
-			if (sidebarEl.contains(e.target as Node) && (e.ctrlKey || e.metaKey)) {
-				preventDefault(e)
-			}
-		}
-
-		sidebarEl.addEventListener('wheel', handleWheel, { passive: false })
-		return () => sidebarEl.removeEventListener('wheel', handleWheel)
-	}, [sidebarRef])
-
 	const handleOverlayClick = useCallback(() => {
+		// The sidebar only hides (CSS transform), it doesn't unmount, so its portaled menus
+		// (workspace switcher, file/user menus) would otherwise stay open over the canvas once the
+		// sidebar is closed. Close them — scoped to this editor's menus plus the global switcher id.
+		// The scope matters: open SDK dialogs register in the same tlmenus registry under the 'tla'
+		// context, and an arg-less clearOpenMenus() would evict them while they stay mounted, leaving
+		// the editor's menu-gated behavior (canvas click-capture, shortcuts, clipboard guards)
+		// thinking nothing is open.
+		if (editor) tlmenus.clearOpenMenus(editor.contextId)
+		tlmenus.deleteOpenMenu('sidebar-workspace-switcher')
 		updateLocalSessionState(() => ({ isSidebarOpenMobile: false }))
-	}, [])
+	}, [editor])
 
-	const { onDrop, onDragOver, onDragEnter, onDragLeave, isDraggingOver } = useTldrFileDrop()
+	const { onDrop, onDragOver, onDragEnter, onDragLeave } = useTldrFileDrop()
+
+	const activeWorkspaceId = useActiveWorkspaceId()
+	const commentingEnabled = useIsCommentingEnabled()
 
 	return (
-		<nav ref={sidebarRef}>
+		<nav aria-hidden={!isSidebarOpen} style={{ visibility: isSidebarOpen ? 'visible' : 'hidden' }}>
 			<button
 				className={styles.sidebarOverlayMobile}
 				data-visiblemobile={isSidebarOpenMobile}
+				data-testid="tla-sidebar-overlay-mobile"
 				onClick={handleOverlayClick}
 			/>
 			<div
@@ -78,21 +80,30 @@ export const TlaSidebar = memo(function TlaSidebar() {
 				onDragEnter={onDragEnter}
 				onDragLeave={onDragLeave}
 			>
-				{isDraggingOver && (
-					<div className={styles.sidebarDragOverlay}>
-						<F defaultMessage="Upload .tldr files" />
-					</div>
-				)}
-				<div className={styles.top}>
+				<div className={styles.sidebarTopRow}>
 					<TlaSidebarWorkspaceLink />
-					<TlaSidebarCreateFileButton />
+					<div style={{ display: 'flex', alignItems: 'center' }}>
+						{commentingEnabled && <TlaSidebarNotificationsButton />}
+						<TlaSidebarCreateFileButton />
+					</div>
 				</div>
-				<div className={styles.content}>
-					<TlaSidebarRecentFiles />
+				{/* The workspace switcher is fixed; only the file list below it scrolls. */}
+				<TlaSidebarWorkspaceSwitcher />
+				<div className={styles.sidebarDivider} />
+				<TlaSidebarWorkspaceActions workspaceId={activeWorkspaceId} />
+				<div className={styles.sidebarDivider} />
+				<div className={styles.sidebarContent} data-sidebar-scroll-container>
+					<div className={styles.sidebarContentInner}>
+						<TlaSidebarRecentFiles />
+					</div>
 				</div>
-				<div className={styles.bottom} data-testid="tla-sidebar-bottom">
-					<TlaSidebarCookieConsent />
-					<TlaSidebarUserLink />
+				<div className={styles.sidebarBottomArea}>
+					<div className={styles.sidebarDivider} />
+					<TlaSidebarDotDevLink />
+					<TlaSidebarFeedbackButton />
+					<div className={styles.sidebarBottomRow}>
+						<TlaUserSettingsMenu />
+					</div>
 				</div>
 			</div>
 		</nav>

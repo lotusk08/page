@@ -1,6 +1,6 @@
 # Images
 
-Helpers for images on tldraw.com. Specifically, it's currently used to dynamically resize and optimize images on-the-fly via Cloudflare's image transform serivce.
+Helpers for images on tldraw.com. Specifically, it's currently used to dynamically resize and optimize images on-the-fly via Cloudflare's image transform service.
 
 ## License
 
@@ -16,7 +16,7 @@ You can find tldraw on npm [here](https://www.npmjs.com/package/@tldraw/tldraw?a
 
 ## Contribution
 
-Please see our [contributing guide](https://github.com/tldraw/tldraw/blob/main/CONTRIBUTING.md). Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
+Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
 
 ## Community
 

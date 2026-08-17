@@ -1,4 +1,5 @@
 import { GeoShapeGeoStyle, useEditor, useValue } from '@tldraw/editor'
+import { useCommentingEnabled } from '../../hooks/useCommentingEnabled'
 import { TLUiToolItem, useTools } from '../../hooks/useTools'
 import { TldrawUiMenuToolItem } from '../primitives/menus/TldrawUiMenuToolItem'
 
@@ -14,22 +15,27 @@ export function DefaultToolbarContent() {
 			<TextToolbarItem />
 			<NoteToolbarItem />
 			<AssetToolbarItem />
+
 			<RectangleToolbarItem />
 			<EllipseToolbarItem />
 			<TriangleToolbarItem />
 			<DiamondToolbarItem />
+
 			<HexagonToolbarItem />
 			<OvalToolbarItem />
 			<RhombusToolbarItem />
 			<StarToolbarItem />
+
 			<CloudToolbarItem />
 			<HeartToolbarItem />
 			<XBoxToolbarItem />
 			<CheckBoxToolbarItem />
+
 			<ArrowLeftToolbarItem />
 			<ArrowUpToolbarItem />
 			<ArrowDownToolbarItem />
 			<ArrowRightToolbarItem />
+
 			<LineToolbarItem />
 			<HighlightToolbarItem />
 			<LaserToolbarItem />
@@ -39,7 +45,7 @@ export function DefaultToolbarContent() {
 }
 
 /** @public */
-export function useIsToolSelected(tool: TLUiToolItem) {
+export function useIsToolSelected(tool: TLUiToolItem | undefined) {
 	const editor = useEditor()
 	const geo = tool?.meta?.geo
 	return useValue(
@@ -47,8 +53,11 @@ export function useIsToolSelected(tool: TLUiToolItem) {
 		() => {
 			if (!tool) return false
 			const activeToolId = editor.getCurrentToolId()
-			const geoState = editor.getSharedStyles().getAsKnownValue(GeoShapeGeoStyle)
-			return geo ? activeToolId === 'geo' && geoState === geo : activeToolId === tool.id
+			if (activeToolId === 'geo') {
+				return geo === editor.getSharedStyles().getAsKnownValue(GeoShapeGeoStyle)
+			} else {
+				return activeToolId === tool.id
+			}
 		},
 		[editor, tool?.id, geo]
 	)
@@ -84,6 +93,19 @@ export function DrawToolbarItem() {
 /** @public @react */
 export function EraserToolbarItem() {
 	return <ToolbarItem tool="eraser" />
+}
+
+/**
+ * Renders the comment tool if it has been registered (e.g. via `@tldraw/commenting`) and commenting
+ * is licensed. Renders nothing otherwise, so it's safe to include in the default toolbar for every
+ * editor.
+ *
+ * @public @react
+ */
+export function CommentToolbarItem() {
+	const commentingEnabled = useCommentingEnabled()
+	if (!commentingEnabled) return null
+	return <ToolbarItem tool="comment" />
 }
 
 /** @public @react */

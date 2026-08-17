@@ -8,11 +8,10 @@
 		"rootDir": "src"
 	},
 	"references": [
-		{
-			"path": "../editor"
-		},
-		{
-			"path": "../store"
-		}
+		{ "path": "../driver" },
+		{ "path": "../editor" },
+		{ "path": "../state" },
+		{ "path": "../store" },
+		{ "path": "../tlschema" }
 	]
 }

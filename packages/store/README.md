@@ -4,6 +4,14 @@
 
 `@tldraw/store` is used by [tldraw](https://www.tldraw.com) to store its data. It is designed to be used with [@tldraw/state](https://github.com/tldraw/tldraw/tree/main/packages/state).
 
+## Documentation
+
+Documentation for the most recent release can be found on [tldraw.dev/docs](https://tldraw.dev/docs), including [reference docs](https://tldraw.dev/reference/editor/Editor). Our release notes can be found [here](https://tldraw.dev/releases).
+
+For more agent-friendly docs, see our [LLMs.txt](https://tldraw.dev/llms.txt).
+
+A `DOCS.md` file is included alongside this README in the published package, with detailed API documentation and usage examples.
+
 # Usage
 
 First create types for your records.
@@ -40,11 +48,11 @@ const store = new RecordStore<Book | Author>()
 Then you can create records, add them to the store, update, and remove them.
 
 ```ts
-const tolkeinId = Author.createCustomId('tolkein')
+const tolkeinId = Author.createId('tolkein')
 
 store.put([
 	Author.create({
-		id: jrrTolkeinId,
+		id: tolkeinId,
 		name: 'J.R.R Tolkein',
 	}),
 ])
@@ -77,7 +85,7 @@ Add some records to the store. It's an error if they already exist.
 ```ts
 const record = Author.create({
 	name: 'J.R.R Tolkein',
-	id: Author.createCustomId('tolkein'),
+	id: Author.createId('tolkein'),
 })
 
 store.put([record])
@@ -88,7 +96,7 @@ store.put([record])
 Update a record. To update multiple records at once, use the `update` method of the `TypedRecordStore` class.
 
 ```ts
-const id = Author.createCustomId('tolkein')
+const id = Author.createId('tolkein')
 
 store.update(id, (r) => ({ ...r, name: 'Jimmy Tolks' }))
 ```
@@ -98,7 +106,7 @@ store.update(id, (r) => ({ ...r, name: 'Jimmy Tolks' }))
 Remove some records from the store via their ids.
 
 ```ts
-const id = Author.createCustomId('tolkein')
+const id = Author.createId('tolkein')
 
 store.remove([id])
 ```
@@ -108,7 +116,7 @@ store.remove([id])
 Get the value of a store record by its id.
 
 ```ts
-const id = Author.createCustomId('tolkein')
+const id = Author.createId('tolkein')
 
 const result = store.get(id)
 ```
@@ -134,7 +142,7 @@ store.clear()
 Get whether the record store has an record stored under the given id.
 
 ```ts
-const id = Author.createCustomId('tolkein')
+const id = Author.createId('tolkein')
 
 const result = store.has(id)
 ```
@@ -163,7 +171,7 @@ store.deserialize(serialized)
 
 ### `listen(listener: ((entry: HistoryEntry) => void): () => void`
 
-Add a new listener to the store The store will call the function each time the history changes. Returns a function to remove the listener.
+Add a new listener to the store. The store will call the function each time the history changes. Returns a function to remove the listener.
 
 ```ts
 store.listen((entry) => doSomethingWith(entry))
@@ -227,12 +235,12 @@ Create an Id for a record of this type.
 const id = recordType.createId()
 ```
 
-### `createCustomId(id: string): ID<R>`
+### `createId(id: string): ID<R>`
 
 Create a custom Id for a record of this type.
 
 ```ts
-const id = recordType.createCustomId('tolkein')
+const id = recordType.createId('tolkein')
 ```
 
 ### `isInstance`
@@ -251,7 +259,7 @@ const result2 = recordType.isInstance(someOtherRecord) // false
 Check if a value is an id for a record of this type.
 
 ```ts
-const id = recordType.createCustomId('tolkein')
+const id = recordType.createId('tolkein')
 
 const result1 = recordType.isId(id) // true
 const result2 = recordType.isId(someOtherId) // false
@@ -300,7 +308,7 @@ const recordType = createRecordType('author'))
 A helper used to assert that a value is an id for a record of a given type.
 
 ```ts
-const id = recordType.createCustomId('tolkein')
+const id = recordType.createId('tolkein')
 
 assertIdType(id, recordType)
 ```
@@ -314,7 +322,7 @@ assertIdType(id, recordType)
 A type used to represent a record's id.
 
 ```ts
-const id: ID<Author> = Author.createCustomId('tolkein')
+const id: ID<Author> = Author.createId('tolkein')
 ```
 
 ### `BaseRecord`
@@ -339,7 +347,7 @@ A diff describing the changes to a collection.
 
 ## Contribution
 
-Please see our [contributing guide](https://github.com/tldraw/tldraw/blob/main/CONTRIBUTING.md). Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
+Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
 
 ## License
 

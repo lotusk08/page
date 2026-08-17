@@ -1,8 +1,10 @@
-# tldraw sync, simple Node/Bun server example
+# tldraw sync, simple Node server example
 
-This is a simple example of a backend for [tldraw sync](https://tldraw.dev/docs/sync) with a Node or Bun server.
+This is a simple example of a backend for [tldraw sync](https://tldraw.dev/docs/sync) with a Node server.
 
-Run `yarn dev-node` or `yarn dev-bun` in this folder to start the server + client.
+Run `yarn dev` in this folder to start the server + client.
+
+Room data is automatically persisted to SQLite databases in the `.rooms` directory using `SQLiteSyncStorage`.
 
 For a production-ready example specific to Cloudflare, see /templates/sync-cloudflare.
 
@@ -20,7 +22,7 @@ You can find tldraw on npm [here](https://www.npmjs.com/package/@tldraw/tldraw?a
 
 ## Contribution
 
-Please see our [contributing guide](https://github.com/tldraw/tldraw/blob/main/CONTRIBUTING.md). Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
+Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
 
 ## Community
 

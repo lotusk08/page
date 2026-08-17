@@ -1,12 +1,12 @@
 import { expect } from '@playwright/test'
-import { Editor, sleep } from 'tldraw'
-import { setup } from '../shared-e2e'
-import test from './fixtures/fixtures'
+import { type Editor } from 'tldraw'
+import test from '../fixtures/fixtures'
+import { setupOrReset, sleep } from '../shared-e2e'
 
 declare const editor: Editor
 
 test.describe('Rich text behaviour', () => {
-	test.beforeEach(setup)
+	test.beforeEach(setupOrReset)
 	test.beforeEach(async ({ page, toolbar, isMobile }) => {
 		// TODO: the mobile e2e test doesn't have the virtual keyboard at the moment.
 		if (isMobile) return
@@ -123,6 +123,32 @@ test.describe('Rich text behaviour', () => {
 		expect(isLinkRemoved).toBe(true)
 	})
 
+	test('clicking outside the link editor saves the link', async ({
+		page,
+		toolbar,
+		richTextToolbar,
+		isMobile,
+	}) => {
+		// TODO: the mobile e2e test doesn't have the virtual keyboard at the moment.
+		if (isMobile) return
+
+		const { rectangle } = toolbar.tools
+		await richTextToolbar.clickTool(richTextToolbar.tools.link)
+		await page.keyboard.type('example.com')
+
+		// Click away to blur the link input (instead of pressing Enter)
+		await page.mouse.click(150, 400)
+		await rectangle.click()
+		await page.mouse.click(150, 400)
+		await page.waitForTimeout(150)
+
+		// Check the link has been saved despite not pressing Enter
+		const isLinkSet = await page.evaluate(async () => {
+			return !!document.querySelector('.tl-rich-text a[href="https://example.com"]')
+		})
+		expect(isLinkSet).toBe(true)
+	})
+
 	// Text selection (the auto select all) doesn't seem to be working in our playwright tests
 	test('shows the toolbar when double clicking a shape to select all', async ({
 		page,
@@ -200,6 +226,7 @@ test.describe('Rich text behaviour', () => {
 		await expect(richTextToolbar.container).toHaveCount(0)
 
 		await page.mouse.click(150, 150) // select the shape
+		await page.locator('.tl-container').first().focus() // explicitly focus the container
 		await page.keyboard.press('Enter') // to start editing the shape
 
 		// bar should be visible (all of the text should be selected)
@@ -222,6 +249,7 @@ test.describe('Rich text behaviour', () => {
 
 		// select it and start editing it again
 		await page.mouse.click(150, 150)
+		await page.locator('.tl-container').first().focus() // explicitly focus the container
 		await page.keyboard.press('Enter')
 
 		// bar should be visible (all of the text should be selected)
@@ -364,6 +392,7 @@ test.describe('Rich text behaviour', () => {
 			Math.round(selectedTextRect!.y - toolbarRect!.height - 8)
 		)
 
+		// historically this has been flaky without the sleep
 		await sleep(2000)
 	})
 
@@ -467,6 +496,7 @@ test.describe('Rich text behaviour', () => {
 		await expect(richTextToolbar.container).toHaveCSS('opacity', '1')
 		await expect(richTextToolbar.container).toHaveCSS('pointer-events', 'all')
 
+		// historically this has been flaky without the sleep
 		await sleep(2000)
 	})
 

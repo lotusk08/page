@@ -1,5 +1,5 @@
 import classNames from 'classnames'
-import { useCallback, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import {
 	Box,
 	Editor,
@@ -23,15 +23,15 @@ import {
 	getLocalSessionState,
 	updateLocalSessionState,
 } from '../../../utils/local-session-state'
-import { TlaButton } from '../../TlaButton/TlaButton'
-import { TlaSelect } from '../../TlaSelect/TlaSelect'
-import { TlaSwitch } from '../../TlaSwitch/TlaSwitch'
 import {
 	TlaMenuControl,
 	TlaMenuControlGroup,
 	TlaMenuControlLabel,
 	TlaMenuSection,
+	TlaMenuSelect,
+	TlaMenuSwitch,
 } from '../../tla-menu/tla-menu'
+import { TlaButton } from '../../TlaButton/TlaButton'
 import styles from '../file-share-menu.module.css'
 
 export function TlaExportTab() {
@@ -39,19 +39,16 @@ export function TlaExportTab() {
 
 	const preferences = useValue('preferences', () => getExportPreferences(app), [app])
 
-	const onChange = useCallback(
-		<T extends keyof TldrawAppSessionState['exportSettings']>(
-			key: T,
-			value: TldrawAppSessionState['exportSettings'][T]
-		) => {
-			if (app) {
-				app.updateUserExportPreferences({ [key]: value })
-			} else {
-				updateLocalSessionState((s) => ({ exportSettings: { ...s.exportSettings, [key]: value } }))
-			}
-		},
-		[app]
-	)
+	const onChange = <T extends keyof TldrawAppSessionState['exportSettings']>(
+		key: T,
+		value: TldrawAppSessionState['exportSettings'][T]
+	) => {
+		if (app) {
+			app.updateUserExportPreferences({ [key]: value })
+		} else {
+			updateLocalSessionState((s) => ({ exportSettings: { ...s.exportSettings, [key]: value } }))
+		}
+	}
 
 	const { exportPadding, exportBackground, exportTheme, exportFormat } = preferences
 
@@ -81,18 +78,18 @@ function ExportPaddingToggle({
 }) {
 	const trackEvent = useTldrawAppUiEvents()
 
-	const handleChange = useCallback(() => {
+	const handleChange = () => {
 		const padding = !value
 		onChange('exportPadding', padding)
 		trackEvent('toggle-export-padding', { padding, source: 'file-share-menu' })
-	}, [trackEvent, value, onChange])
+	}
 
 	return (
 		<TlaMenuControl>
-			<TlaMenuControlLabel>
+			<TlaMenuControlLabel htmlFor="tla-export-padding-switch">
 				<F defaultMessage="Padding" />
 			</TlaMenuControlLabel>
-			<TlaSwitch checked={value} onChange={handleChange} />
+			<TlaMenuSwitch id="tla-export-padding-switch" checked={value} onChange={handleChange} />
 		</TlaMenuControl>
 	)
 }
@@ -109,18 +106,18 @@ function ExportBackgroundToggle({
 }) {
 	const trackEvent = useTldrawAppUiEvents()
 
-	const handleChange = useCallback(() => {
+	const handleChange = () => {
 		const background = !value
 		onChange('exportBackground', background)
 		trackEvent('toggle-export-background', { background, source: 'file-share-menu' })
-	}, [value, onChange, trackEvent])
+	}
 
 	return (
 		<TlaMenuControl>
-			<TlaMenuControlLabel>
+			<TlaMenuControlLabel htmlFor="tla-export-background-switch">
 				<F defaultMessage="Background" />
 			</TlaMenuControlLabel>
-			<TlaSwitch checked={value} onChange={handleChange} />
+			<TlaMenuSwitch id="tla-export-background-switch" checked={value} onChange={handleChange} />
 		</TlaMenuControl>
 	)
 }
@@ -137,20 +134,18 @@ function ExportFormatSelect({
 }) {
 	const trackEvent = useTldrawAppUiEvents()
 
-	const handleChange = useCallback(
-		(value: TldrawAppSessionState['exportSettings']['exportFormat']) => {
-			onChange('exportFormat', value)
-			trackEvent('set-export-format', { format: value, source: 'file-share-menu' })
-		},
-		[onChange, trackEvent]
-	)
+	const handleChange = (value: TldrawAppSessionState['exportSettings']['exportFormat']) => {
+		onChange('exportFormat', value)
+		trackEvent('set-export-format', { format: value, source: 'file-share-menu' })
+	}
 
 	return (
 		<TlaMenuControl>
-			<TlaMenuControlLabel>
+			<TlaMenuControlLabel htmlFor="tla-export-format-select">
 				<F defaultMessage="Export as" />
 			</TlaMenuControlLabel>
-			<TlaSelect
+			<TlaMenuSelect
+				id="tla-export-format-select"
 				value={value}
 				label={value === 'svg' ? 'SVG' : 'PNG'}
 				onChange={handleChange}
@@ -178,20 +173,18 @@ function ExportThemeSelect({
 }) {
 	const label = useMsg(messages[value as 'auto' | 'light' | 'dark'])
 	const trackEvent = useTldrawAppUiEvents()
-	const handleChange = useCallback(
-		(value: TldrawAppSessionState['exportSettings']['exportTheme']) => {
-			onChange('exportTheme', value)
-			trackEvent('set-export-theme', { theme: value, source: 'file-share-menu' })
-		},
-		[onChange, trackEvent]
-	)
+	const handleChange = (value: TldrawAppSessionState['exportSettings']['exportTheme']) => {
+		onChange('exportTheme', value)
+		trackEvent('set-export-theme', { theme: value, source: 'file-share-menu' })
+	}
 
 	return (
 		<TlaMenuControl>
-			<TlaMenuControlLabel>
+			<TlaMenuControlLabel htmlFor="tla-export-theme-select">
 				<F defaultMessage="Theme" />
 			</TlaMenuControlLabel>
-			<TlaSelect
+			<TlaMenuSelect
+				id="tla-export-theme-select"
 				value={value}
 				label={label}
 				onChange={handleChange}
@@ -211,7 +204,7 @@ function ExportImageButton() {
 
 	const [exported, setExported] = useState(false)
 
-	const handleClick = useCallback(() => {
+	const handleClick = () => {
 		if (exported) return
 
 		const editor = getCurrentEditor()
@@ -228,7 +221,7 @@ function ExportImageButton() {
 		}
 
 		const opts = {
-			padding: exportPadding ? editor.options.defaultSvgPadding : 0,
+			padding: exportPadding ? editor.options.defaultSvgPadding : ('auto' as const),
 			background: exportBackground,
 			darkMode: exportTheme === 'auto' ? undefined : exportTheme === 'dark',
 			format: exportFormat as TLExportType,
@@ -251,7 +244,7 @@ function ExportImageButton() {
 		return () => {
 			setExported(false)
 		}
-	}, [exported, trackEvent, app])
+	}
 
 	return (
 		<>
@@ -318,11 +311,11 @@ function ExportPreviewImage() {
 	)
 
 	return (
-		<div className={styles.exportPreview}>
-			<img ref={ref} className={styles.exportPreviewInner} />
+		<div className={styles.fileShareMenuExportPreview}>
+			<img ref={ref} className={styles.fileShareMenuExportPreviewInner} />
 			<div
 				ref={rImagePreviewSize}
-				className={classNames(styles.exportPreviewSize, 'tla-text_ui__small')}
+				className={classNames(styles.fileShareMenuExportPreviewSize, 'tla-text_ui__small')}
 			/>
 		</div>
 	)
@@ -344,7 +337,7 @@ async function getEditorImage(
 	const result = await editor.toImage(shapes, {
 		scale,
 		format: 'png',
-		padding: exportPadding ? editor.options.defaultSvgPadding : 0,
+		padding: exportPadding ? editor.options.defaultSvgPadding : ('auto' as const),
 		background: exportBackground,
 		darkMode: exportTheme === 'auto' ? undefined : exportTheme === 'dark',
 	})

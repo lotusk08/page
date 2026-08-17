@@ -1,10 +1,9 @@
 import { expect } from '@playwright/test'
-import { sleep } from 'tldraw'
-import { setup } from '../shared-e2e'
-import test from './fixtures/fixtures'
+import test from '../fixtures/fixtures'
+import { setupOrReset } from '../shared-e2e'
 
 test.describe('more rich text', () => {
-	test.beforeEach(setup)
+	test.beforeEach(setupOrReset)
 
 	test('Double click from select tool to create and edit text on the canvas', async ({
 		page,
@@ -12,25 +11,32 @@ test.describe('more rich text', () => {
 	}) => {
 		await toolbar.tools.select.click()
 		await page.mouse.dblclick(150, 150)
-		await sleep(500) // racey here
+		// Wait for the contenteditable to actually be focused, not just visible.
+		// The editor focuses on a deferred timeout after mounting, so typing as
+		// soon as the element is visible drops the first keystroke.
+		await page.waitForFunction(
+			() => document.activeElement === document.querySelector('.tl-shape [contenteditable]')
+		)
 		await page.keyboard.type('id like to go to india')
-		expect(page.getByTestId('rich-text-area')).toHaveText('id like to go to india')
+		await expect(page.getByTestId('rich-text-area')).toHaveText('id like to go to india')
 	})
 
 	test('Click with text tool to create and edit text on the canvas', async ({ page, toolbar }) => {
 		await toolbar.tools.text.click()
 		await page.mouse.click(150, 150)
-		await sleep(500) // racey here
+		// Wait for the contenteditable to actually be focused (not just visible)
+		// so the first keystroke isn't dropped.
+		await page.waitForFunction(
+			() => document.activeElement === document.querySelector('.tl-shape [contenteditable]')
+		)
 		await page.keyboard.type('Live in a big white house in the forest')
-		expect(page.getByTestId('rich-text-area')).toHaveText('Live in a big white house in the forest')
+		await expect(page.getByTestId('rich-text-area')).toHaveText(
+			'Live in a big white house in the forest'
+		)
 
-		// expect indicator to be in the DOM (since the shape is editing)
-		const indicator = page.locator('.tl-overlays__item')
-		expect(indicator.first()).toHaveCSS('display', 'block')
-
-		// ...but expect the rectangle inside of the indicator to be hidden (because it's auto width)
-		const indicatorRect = page.locator('.tl-overlays__item > .tl-shape-indicator > rect')
-		expect(await indicatorRect.isHidden()).toBe(true)
+		// expect canvas overlays to be visible (indicators render there when editing)
+		const canvasIndicator = page.locator('.tl-canvas-overlays')
+		await expect(canvasIndicator).toBeVisible()
 	})
 
 	test('Click and drag with text tool to create and edit fixed-width text on the canvas', async ({
@@ -42,18 +48,18 @@ test.describe('more rich text', () => {
 		await page.mouse.down()
 		await page.mouse.move(350, 150, { steps: 10 })
 		await page.mouse.up()
-		await sleep(500) // racey here
+		// Wait for the contenteditable to actually be focused (not just visible)
+		// so the first keystroke isn't dropped.
+		await page.waitForFunction(
+			() => document.activeElement === document.querySelector('.tl-shape [contenteditable]')
+		)
 		await page.keyboard.type('Drink gin and tonic and play a grand piano')
-		expect(page.getByTestId('rich-text-area')).toHaveText(
+		await expect(page.getByTestId('rich-text-area')).toHaveText(
 			'Drink gin and tonic and play a grand piano'
 		)
 
-		// expect indicator to be in the DOM (since the shape is editing)
-		const indicator = page.locator('.tl-overlays__item')
-		expect(indicator.first()).toHaveCSS('display', 'block')
-
-		// ...but expect the rectangle inside of the indicator to be visible (because it's fixed width)
-		const indicatorRect = page.locator('.tl-overlays__item > .tl-shape-indicator > rect')
-		expect(await indicatorRect.isVisible()).toBe(true)
+		// expect canvas overlays to be visible (indicators render there when editing)
+		const canvasIndicator = page.locator('.tl-canvas-overlays')
+		await expect(canvasIndicator).toBeVisible()
 	})
 })

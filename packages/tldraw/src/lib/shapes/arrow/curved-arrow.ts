@@ -11,13 +11,14 @@ import {
 	counterClockwiseAngleDist,
 	isSafeFloat,
 } from '@tldraw/editor'
+import { STROKE_SIZES } from '../shared/default-shape-constants'
 import { TLArcInfo, TLArrowInfo } from './arrow-types'
 import {
 	BOUND_ARROW_OFFSET,
 	MIN_ARROW_LENGTH,
-	STROKE_SIZES,
 	TLArrowBindings,
 	WAY_TOO_BIG_ARROW_BEND_FACTOR,
+	clampArrowTerminalToMask,
 	getArrowTerminalsInArrowSpace,
 	getBoundShapeInfoForTerminal,
 	getBoundShapeRelationships,
@@ -27,7 +28,8 @@ import { getStraightArrowInfo } from './straight-arrow'
 export function getCurvedArrowInfo(
 	editor: Editor,
 	shape: TLArrowShape,
-	bindings: TLArrowBindings
+	bindings: TLArrowBindings,
+	arrowStrokeWidth?: number
 ): TLArrowInfo {
 	const { arrowheadEnd, arrowheadStart } = shape.props
 	const bend = shape.props.bend
@@ -36,7 +38,7 @@ export function getCurvedArrowInfo(
 		Math.abs(bend) >
 		Math.abs(shape.props.bend * (WAY_TOO_BIG_ARROW_BEND_FACTOR * shape.props.scale))
 	) {
-		return getStraightArrowInfo(editor, shape, bindings)
+		return getStraightArrowInfo(editor, shape, bindings, arrowStrokeWidth)
 	}
 
 	const terminalsInArrowSpace = getArrowTerminalsInArrowSpace(editor, shape, bindings)
@@ -46,6 +48,9 @@ export function getCurvedArrowInfo(
 	// Check for divide-by-zero before we call uni()
 	const u = Vec.Len(distance) ? distance.uni() : Vec.From(distance) // unit vector between start and end
 	const middle = Vec.Add(med, u.per().mul(-bend)) // middle handle
+
+	const theme = editor.getCurrentTheme()
+	const arrowSW = arrowStrokeWidth ?? theme.strokeWidth * STROKE_SIZES[shape.props.size]
 
 	const startShapeInfo = getBoundShapeInfoForTerminal(editor, shape, 'start')
 	const endShapeInfo = getBoundShapeInfoForTerminal(editor, shape, 'end')
@@ -59,7 +64,7 @@ export function getCurvedArrowInfo(
 	if (Vec.Equals(a, b)) {
 		return {
 			bindings,
-			isStraight: true,
+			type: 'straight',
 			start: {
 				handle: a,
 				point: a,
@@ -90,7 +95,7 @@ export function getCurvedArrowInfo(
 		!isSafeFloat(handleArc.length) ||
 		!isSafeFloat(handleArc.size)
 	) {
-		return getStraightArrowInfo(editor, shape, bindings)
+		return getStraightArrowInfo(editor, shape, bindings, arrowStrokeWidth)
 	}
 
 	const tempA = a.clone()
@@ -150,9 +155,20 @@ export function getCurvedArrowInfo(
 								: 1
 			)
 
-			point = intersections[0] ?? (isClosed ? undefined : startInStartShapeLocalSpace)
-		} else {
-			point = isClosed ? undefined : startInStartShapeLocalSpace
+			point = intersections[0]
+		}
+		if (!point) {
+			if (isClosed) {
+				const nearestPoint = startShapeInfo.geometry.nearestPoint(startInStartShapeLocalSpace, {
+					includeInternal: false,
+					includeLabels: false,
+				})
+				if (Vec.DistMin(nearestPoint, startInStartShapeLocalSpace, 1)) {
+					point = nearestPoint
+				}
+			} else {
+				point = startInStartShapeLocalSpace
+			}
 		}
 
 		if (point) {
@@ -164,9 +180,9 @@ export function getCurvedArrowInfo(
 
 			if (arrowheadStart !== 'none') {
 				const strokeOffset =
-					STROKE_SIZES[shape.props.size] / 2 +
+					arrowSW / 2 +
 					('size' in startShapeInfo.shape.props
-						? STROKE_SIZES[startShapeInfo.shape.props.size] / 2
+						? (theme.strokeWidth * STROKE_SIZES[startShapeInfo.shape.props.size]) / 2
 						: 0)
 				offsetA = (BOUND_ARROW_OFFSET + strokeOffset) * shape.props.scale
 				minLength += strokeOffset * shape.props.scale
@@ -195,7 +211,7 @@ export function getCurvedArrowInfo(
 			})
 		)
 
-		if (intersections) {
+		if (intersections.length) {
 			const angleToStart = centerInEndShapeLocalSpace.angle(startInEndShapeLocalSpace)
 			const angleToEnd = centerInEndShapeLocalSpace.angle(endInEndShapeLocalSpace)
 			const dAB = distFn(angleToStart, angleToEnd)
@@ -221,13 +237,20 @@ export function getCurvedArrowInfo(
 								: 1
 			)
 
-			if (intersections[0]) {
-				point = intersections[0]
+			point = intersections[0]
+		}
+		if (!point) {
+			if (isClosed) {
+				const nearestPoint = endShapeInfo.geometry.nearestPoint(endInEndShapeLocalSpace, {
+					includeInternal: false,
+					includeLabels: false,
+				})
+				if (Vec.DistMin(nearestPoint, endInEndShapeLocalSpace, 1)) {
+					point = nearestPoint
+				}
 			} else {
-				point = isClosed ? undefined : endInEndShapeLocalSpace
+				point = endInEndShapeLocalSpace
 			}
-		} else {
-			point = isClosed ? undefined : endInEndShapeLocalSpace
 		}
 
 		if (point) {
@@ -240,13 +263,19 @@ export function getCurvedArrowInfo(
 
 			if (arrowheadEnd !== 'none') {
 				const strokeOffset =
-					STROKE_SIZES[shape.props.size] / 2 +
-					('size' in endShapeInfo.shape.props ? STROKE_SIZES[endShapeInfo.shape.props.size] / 2 : 0)
+					arrowSW / 2 +
+					('size' in endShapeInfo.shape.props
+						? (theme.strokeWidth * STROKE_SIZES[endShapeInfo.shape.props.size]) / 2
+						: 0)
 				offsetB = (BOUND_ARROW_OFFSET + strokeOffset) * shape.props.scale
 				minLength += strokeOffset * shape.props.scale
 			}
 		}
 	}
+
+	// Clamp terminals to mask boundaries if the bound shape is clipped (e.g. by a frame)
+	clampArrowTerminalToMask(editor, tempA, a, arrowPageTransform, startShapeInfo)
+	clampArrowTerminalToMask(editor, tempB, b, arrowPageTransform, endShapeInfo)
 
 	// Apply arrowhead offsets
 
@@ -284,6 +313,13 @@ export function getCurvedArrowInfo(
 		} else {
 			// noop
 		}
+
+		// if we're using negative offsets, we need to make sure that the body arc doesn't end up
+		// larger than the handle arc or things will get weird:
+		const minOffsetA = 0.1 - distFn(handle_aCA, aCA) * handleArc.radius
+		const minOffsetB = 0.1 - distFn(aCB, handle_aCB) * handleArc.radius
+		offsetA = Math.max(offsetA, minOffsetA)
+		offsetB = Math.max(offsetB, minOffsetB)
 	}
 
 	if (offsetA !== 0) {
@@ -363,7 +399,7 @@ export function getCurvedArrowInfo(
 
 	return {
 		bindings,
-		isStraight: false,
+		type: 'arc',
 		start: {
 			point: a,
 			handle: terminalsInArrowSpace.start,

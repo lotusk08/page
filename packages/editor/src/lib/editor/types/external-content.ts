@@ -1,4 +1,4 @@
-import { TLAssetId } from '@tldraw/tlschema'
+import { TLAssetId, TLShapeId } from '@tldraw/tlschema'
 import { VecLike } from '../../primitives/Vec'
 import { TLContent } from './clipboard-types'
 
@@ -37,6 +37,11 @@ export type TLExternalContentSource =
 
 /** @public */
 export interface TLBaseExternalContent {
+	/**
+	 * The other content sources found on the clipboard alongside this content. For example, when
+	 * pasting an image copied together with HTML and plain text, the `files` content will have
+	 * text sources for the HTML and plain text parts.
+	 */
 	sources?: TLExternalContentSource[]
 	point?: VecLike
 }
@@ -52,7 +57,16 @@ export interface TLTextExternalContent extends TLBaseExternalContent {
 export interface TLFilesExternalContent extends TLBaseExternalContent {
 	type: 'files'
 	files: File[]
-	ignoreParent: boolean
+	ignoreParent?: boolean
+}
+
+/** @public */
+export interface TLFileReplaceExternalContent extends TLBaseExternalContent {
+	type: 'file-replace'
+	file: File
+	shapeId: TLShapeId
+	/** @deprecated This field is no longer used by the default handler. It may be removed in a future version. */
+	isImage: boolean
 }
 
 /** @public */
@@ -90,6 +104,7 @@ export interface TLExcalidrawExternalContent extends TLBaseExternalContent {
 export type TLExternalContent<EmbedDefinition> =
 	| TLTextExternalContent
 	| TLFilesExternalContent
+	| TLFileReplaceExternalContent
 	| TLUrlExternalContent
 	| TLSvgTextExternalContent
 	| TLEmbedExternalContent<EmbedDefinition>

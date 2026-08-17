@@ -34,7 +34,7 @@ A section looks like this:
 {
 	"id": "community",
 	"title": "Community",
-	"description": "Guides for contributing to tldraw's open source project.",
+	"description": "Community resources for tldraw.",
 	"categories": []
 }
 ```
@@ -120,6 +120,26 @@ The `keywords` are used to find an article through the site's search feature.
 
 The auto-generated docs content is created using [tsdoc](https://tsdoc.org/) and [API extractor](https://api-extractor.com/). The source is the API documentation created by `yarn build` or `yarn build-api`. The output is placed in the `gen` folder.
 
+## Release notes
+
+Release notes live in `content/releases/` and are the source of truth for SDK release documentation.
+
+### File structure
+
+- `next.mdx` - Accumulates changes for the upcoming release
+- `vX.Y.0.mdx` - Published release notes (one file per minor release)
+
+### Workflow
+
+1. As PRs merge to main, update `next.mdx` with release notes using the `update-release-notes` skill
+2. When publishing a release:
+   - Rename `next.mdx` to `vX.Y.0.mdx`
+   - Update the frontmatter `order` field
+   - Create a new `next.mdx` for the next version
+3. The release notes can then be copied to GitHub releases
+
+See `skills/update-release-notes/` for the maintenance workflow and `skills/write-release-notes/` for writing guidance.
+
 ## Developing the docs
 
 You'll need to install Git LFS to get our blog post images (which can be large). See instructions [here](https://docs.github.com/en/repositories/working-with-files/managing-large-files/installing-git-large-file-storage).
@@ -128,7 +148,7 @@ When developing the docs, any change to the `content` folder will cause the page
 
 ## Contribution
 
-Please see our [contributing guide](https://github.com/tldraw/tldraw/blob/main/CONTRIBUTING.md). Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
+Found a bug? Please [submit an issue](https://github.com/tldraw/tldraw/issues/new).
 
 ## License
 

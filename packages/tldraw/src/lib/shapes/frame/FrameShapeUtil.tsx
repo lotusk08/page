@@ -1,5 +1,5 @@
 import {
-	BaseBoxShapeUtil,
+	BaseFrameLikeShapeUtil,
 	DefaultColorStyle,
 	Geometry2d,
 	Group2d,
@@ -7,21 +7,18 @@ import {
 	SVGContainer,
 	SvgExportContext,
 	TLClickEventInfo,
+	TLEditStartInfo,
 	TLFrameShape,
 	TLFrameShapeProps,
-	TLGroupShape,
-	TLResizeInfo,
-	TLShape,
 	TLShapePartial,
 	TLShapeUtilConstructor,
 	clamp,
 	compact,
 	frameShapeMigrations,
 	frameShapeProps,
-	getDefaultColorTheme,
+	getColorValue,
 	lerp,
-	resizeBox,
-	toDomPrecision,
+	useColorMode,
 	useValue,
 } from '@tldraw/editor'
 import classNames from 'classnames'
@@ -30,9 +27,10 @@ import {
 	TLCreateTextJsxFromSpansOpts,
 	createTextJsxFromSpans,
 } from '../shared/createTextJsxFromSpans'
-import { useDefaultColorTheme } from '../shared/useDefaultColorTheme'
+import { ShapeOptionsWithDisplayValues, getDisplayValues } from '../shared/getDisplayValues'
 import { FrameHeading } from './components/FrameHeading'
 import {
+	defaultEmptyAs,
 	getFrameHeadingOpts,
 	getFrameHeadingSide,
 	getFrameHeadingSize,
@@ -46,28 +44,62 @@ const FRAME_HEADING_NOCOLORS_OFFSET_X = -7
 const FRAME_HEADING_OFFSET_Y = 4
 
 /** @public */
-export interface FrameShapeOptions {
+export interface FrameShapeUtilDisplayValues {
+	fillColor: string
+	strokeColor: string
+	showColorsFillColor: string
+	showColorsStrokeColor: string
+	headingFillColor: string
+	headingStrokeColor: string
+	headingTextColor: string
+	showColorsHeadingFillColor: string
+	showColorsHeadingStrokeColor: string
+	showColorsHeadingTextColor: string
+}
+
+/** @public */
+export interface FrameShapeOptions extends ShapeOptionsWithDisplayValues<
+	TLFrameShape,
+	FrameShapeUtilDisplayValues
+> {
 	/**
 	 * When true, the frame will display colors for the shape's headings and background.
 	 */
 	showColors: boolean
-}
-
-export function defaultEmptyAs(str: string, dflt: string) {
-	if (str.match(/^\s*$/)) {
-		return dflt
-	}
-	return str
+	/**
+	 * When true, the frame will resize its children when the frame itself is resized.
+	 */
+	resizeChildren: boolean
 }
 
 /** @public */
-export class FrameShapeUtil extends BaseBoxShapeUtil<TLFrameShape> {
+export class FrameShapeUtil extends BaseFrameLikeShapeUtil<TLFrameShape> {
 	static override type = 'frame' as const
 	static override props = frameShapeProps
 	static override migrations = frameShapeMigrations
 
 	override options: FrameShapeOptions = {
 		showColors: false,
+		resizeChildren: false,
+		getDefaultDisplayValues(_editor, shape, theme, colorMode): FrameShapeUtilDisplayValues {
+			const { color } = shape.props
+			const colors = theme.colors[colorMode]
+			return {
+				fillColor: getColorValue(colors, 'black', 'frameFill'),
+				strokeColor: getColorValue(colors, 'black', 'frameStroke'),
+				showColorsFillColor: getColorValue(colors, color, 'frameFill'),
+				showColorsStrokeColor: getColorValue(colors, color, 'frameStroke'),
+				headingFillColor: colors.negativeSpace,
+				headingStrokeColor: colors.negativeSpace,
+				headingTextColor: getColorValue(colors, 'black', 'frameText'),
+				showColorsHeadingFillColor: getColorValue(colors, color, 'frameHeadingFill'),
+				showColorsHeadingStrokeColor: getColorValue(colors, color, 'frameHeadingStroke'),
+				showColorsHeadingTextColor: getColorValue(colors, color, 'frameText'),
+			}
+		},
+		getCustomDisplayValues(): Partial<FrameShapeUtilDisplayValues> {
+			return {}
+		},
 	}
 
 	// evil crimes :)
@@ -86,7 +118,19 @@ export class FrameShapeUtil extends BaseBoxShapeUtil<TLFrameShape> {
 		return withOptions
 	}
 
-	override canEdit() {
+	override canEdit(shape: TLFrameShape, info: TLEditStartInfo) {
+		return info.type === 'click-header' || info.type === 'unknown'
+	}
+
+	override canResize(shape: TLFrameShape) {
+		return true
+	}
+
+	override canResizeChildren(shape: TLFrameShape) {
+		return this.options.resizeChildren
+	}
+
+	override isExportBoundsContainer(): boolean {
 		return true
 	}
 
@@ -101,7 +145,7 @@ export class FrameShapeUtil extends BaseBoxShapeUtil<TLFrameShape> {
 	override getGeometry(shape: TLFrameShape): Geometry2d {
 		const { editor } = this
 
-		const z = editor.getZoomLevel()
+		const z = editor.getEfficientZoomLevel()
 
 		// Which dimension measures the top edge after rotation?
 		const labelSide = getFrameHeadingSide(editor, shape)
@@ -182,6 +226,7 @@ export class FrameShapeUtil extends BaseBoxShapeUtil<TLFrameShape> {
 					height,
 					isFilled: true,
 					isLabel: true,
+					excludeFromShapeBounds: true,
 				}),
 			],
 		})
@@ -193,7 +238,8 @@ export class FrameShapeUtil extends BaseBoxShapeUtil<TLFrameShape> {
 
 	override component(shape: TLFrameShape) {
 		// eslint-disable-next-line react-hooks/rules-of-hooks
-		const theme = useDefaultColorTheme()
+		const colorMode = useColorMode()
+		const dv = getDisplayValues(this, shape, colorMode)
 
 		// eslint-disable-next-line react-hooks/rules-of-hooks
 		const isCreating = useValue(
@@ -210,38 +256,29 @@ export class FrameShapeUtil extends BaseBoxShapeUtil<TLFrameShape> {
 			[shape.id]
 		)
 
-		// eslint-disable-next-line react-hooks/rules-of-hooks
-		const zoomLevel = useValue('zoom level', () => this.editor.getZoomLevel(), [this.editor])
-
 		const showFrameColors = this.options.showColors
-
-		const color = theme[shape.props.color]
-		const frameFill = showFrameColors ? color.frame.fill : theme.black.frame.fill
-		const frameStroke = showFrameColors ? color.frame.stroke : theme.black.frame.stroke
-		const frameHeadingStroke = showFrameColors ? color.frame.headingStroke : theme.background
-		const frameHeadingFill = showFrameColors ? color.frame.headingFill : theme.background
-		const frameHeadingText = showFrameColors ? color.frame.text : theme.text
 
 		return (
 			<>
 				<SVGContainer>
 					<rect
 						className={classNames('tl-frame__body', { 'tl-frame__creating': isCreating })}
-						width={shape.props.w + 1 / zoomLevel}
-						height={shape.props.h + 1 / zoomLevel}
-						fill={frameFill}
-						stroke={frameStroke}
-						y={-0.5 / zoomLevel}
-						x={-0.5 / zoomLevel}
+						fill={showFrameColors ? dv.showColorsFillColor : dv.fillColor}
+						stroke={showFrameColors ? dv.showColorsStrokeColor : dv.strokeColor}
+						style={{
+							width: `calc(${shape.props.w}px + 1px / var(--tl-zoom))`,
+							height: `calc(${shape.props.h}px + 1px / var(--tl-zoom))`,
+							transform: `translate(calc(-0.5px / var(--tl-zoom)), calc(-0.5px / var(--tl-zoom)))`,
+						}}
 					/>
 				</SVGContainer>
 				{isCreating ? null : (
 					<FrameHeading
 						id={shape.id}
 						name={shape.props.name}
-						fill={frameHeadingFill}
-						stroke={frameHeadingStroke}
-						color={frameHeadingText}
+						fill={showFrameColors ? dv.showColorsHeadingFillColor : dv.headingFillColor}
+						stroke={showFrameColors ? dv.showColorsHeadingStrokeColor : dv.headingStrokeColor}
+						color={showFrameColors ? dv.showColorsHeadingTextColor : dv.headingTextColor}
 						width={shape.props.w}
 						height={shape.props.h}
 						offsetX={showFrameColors ? -1 : -7}
@@ -253,7 +290,7 @@ export class FrameShapeUtil extends BaseBoxShapeUtil<TLFrameShape> {
 	}
 
 	override toSvg(shape: TLFrameShape, ctx: SvgExportContext) {
-		const theme = getDefaultColorTheme({ isDarkMode: ctx.isDarkMode })
+		const dv = getDisplayValues(this, shape, ctx.colorMode)
 
 		// rotate right 45 deg
 		const labelSide = getFrameHeadingSide(this.editor, shape)
@@ -270,21 +307,19 @@ export class FrameShapeUtil extends BaseBoxShapeUtil<TLFrameShape> {
 		const text = createTextJsxFromSpans(this.editor, spans, opts)
 
 		const showFrameColors = this.options.showColors
-
-		const color = theme[shape.props.color]
-		const frameFill = showFrameColors ? color.frame.fill : theme.black.frame.fill
-		const frameStroke = showFrameColors ? color.frame.stroke : theme.black.frame.stroke
-		const frameHeadingStroke = showFrameColors ? color.frame.headingStroke : theme.background
-		const frameHeadingFill = showFrameColors ? color.frame.headingFill : theme.background
-		const frameHeadingText = showFrameColors ? color.frame.text : theme.text
+		const frameHeadingStroke = showFrameColors
+			? dv.showColorsHeadingStrokeColor
+			: dv.headingStrokeColor
+		const frameHeadingFill = showFrameColors ? dv.showColorsHeadingFillColor : dv.headingFillColor
+		const frameHeadingText = showFrameColors ? dv.showColorsHeadingTextColor : dv.headingTextColor
 
 		return (
 			<>
 				<rect
 					width={shape.props.w}
 					height={shape.props.h}
-					fill={frameFill}
-					stroke={frameStroke}
+					fill={showFrameColors ? dv.showColorsFillColor : dv.fillColor}
+					stroke={showFrameColors ? dv.showColorsStrokeColor : dv.strokeColor}
 					strokeWidth={1}
 					x={0}
 					rx={0}
@@ -307,51 +342,12 @@ export class FrameShapeUtil extends BaseBoxShapeUtil<TLFrameShape> {
 		)
 	}
 
-	indicator(shape: TLFrameShape) {
-		return (
-			<rect
-				width={toDomPrecision(shape.props.w)}
-				height={toDomPrecision(shape.props.h)}
-				className={`tl-frame-indicator`}
-			/>
-		)
+	override getIndicatorPath(shape: TLFrameShape): Path2D {
+		const path = new Path2D()
+		path.rect(0, 0, shape.props.w, shape.props.h)
+		return path
 	}
 
-	override canReceiveNewChildrenOfType(shape: TLShape, _type: TLShape['type']) {
-		return !shape.isLocked
-	}
-
-	override providesBackgroundForChildren(): boolean {
-		return true
-	}
-
-	override canDropShapes(shape: TLFrameShape, _shapes: TLShape[]): boolean {
-		return !shape.isLocked
-	}
-
-	override onDragShapesOver(frame: TLFrameShape, shapes: TLShape[]) {
-		if (!shapes.every((child) => child.parentId === frame.id)) {
-			this.editor.reparentShapes(shapes, frame.id)
-		}
-	}
-
-	override onDragShapesOut(_shape: TLFrameShape, shapes: TLShape[]): void {
-		const parent = this.editor.getShape(_shape.parentId)
-		const isInGroup = parent && this.editor.isShapeOfType<TLGroupShape>(parent, 'group')
-
-		// If frame is in a group, keep the shape
-		// moved out in that group
-
-		if (isInGroup) {
-			this.editor.reparentShapes(shapes, parent.id)
-		} else {
-			this.editor.reparentShapes(shapes, this.editor.getCurrentPageId())
-		}
-	}
-
-	override onResize(shape: any, info: TLResizeInfo<any>) {
-		return resizeBox(shape, info)
-	}
 	override getInterpolatedProps(
 		startShape: TLFrameShape,
 		endShape: TLFrameShape,

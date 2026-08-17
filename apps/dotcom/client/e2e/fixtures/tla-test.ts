@@ -1,15 +1,17 @@
-import { setupClerkTestingToken } from '@clerk/testing/playwright'
-import { test as base, expect, Page } from '@playwright/test'
 import fs from 'fs'
-import { sleep } from 'tldraw'
+import { setupClerkTestingToken } from '@clerk/testing/playwright'
+import { test as base, expect } from '@playwright/test'
 import { OTHER_USERS, USERS } from '../consts'
 import { Database } from './Database'
 import { DeleteFileDialog } from './DeleteFileDialog'
 import { Editor } from './Editor'
-import { createFixtures, getStorageStateFileName } from './helpers'
+import { getStorageStateFileName } from './helpers'
 import { HomePage } from './HomePage'
+import { ImportHelper } from './ImportHelper'
 import { ShareMenu } from './ShareMenu'
 import { Sidebar } from './Sidebar'
+import { SignInDialog } from './SignInDialog'
+import { WorkspaceInviteDialog } from './WorkspaceInviteDialog'
 
 interface TlaFixtures {
 	homePage: HomePage
@@ -18,6 +20,9 @@ interface TlaFixtures {
 	shareMenu: ShareMenu
 	database: Database
 	deleteFileDialog: DeleteFileDialog
+	workspaceInviteDialog: WorkspaceInviteDialog
+	signInDialog: SignInDialog
+	importHelper: ImportHelper
 	setupAndCleanup: void
 	retry(fn: () => Promise<void>): Promise<void>
 }
@@ -44,6 +49,15 @@ export const test = base.extend<TlaFixtures, TlaWorkerFixtures>({
 	},
 	deleteFileDialog: async ({ page }, testUse) => {
 		await testUse(new DeleteFileDialog(page))
+	},
+	workspaceInviteDialog: async ({ page }, testUse) => {
+		await testUse(new WorkspaceInviteDialog(page))
+	},
+	signInDialog: async ({ page }, testUse) => {
+		await testUse(new SignInDialog(page))
+	},
+	importHelper: async ({ page }, testUse) => {
+		await testUse(new ImportHelper(page))
 	},
 	// This is an auto fixture which makes sure that we are on the home page when the test starts
 	// and that we clean up when the tests completes
@@ -101,19 +115,71 @@ export const test = base.extend<TlaFixtures, TlaWorkerFixtures>({
 
 export { expect } from '@playwright/test'
 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-export function step(target: Function, context: any) {
-	if (context.kind === 'method') {
-		return async function (...args: any[]) {
-			// @ts-expect-error Parameter 'this' implicitly has an 'any' type.ts(7006)
-			return await test.step(`${this.constructor.name}.${context.name}`, async () => {
-				// @ts-expect-error Parameter 'this' implicitly has an 'any' type.ts(7006)
-				return target.apply(this, args)
+/** Stage 3 / TS 5.2+ method decorator context (subset; avoids coupling to a specific TS lib version). */
+interface StepMethodDecoratorContext {
+	kind: 'method'
+	name: string | symbol
+}
+
+function isStage3MethodDecoratorContext(value: unknown): value is StepMethodDecoratorContext {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'kind' in value &&
+		(value as StepMethodDecoratorContext).kind === 'method'
+	)
+}
+
+/** Legacy method decorator (`experimentalDecorators`). */
+export function step<T extends (...args: any[]) => any>(
+	target: object,
+	propertyKey: string | symbol,
+	descriptor: TypedPropertyDescriptor<T>
+): TypedPropertyDescriptor<T>
+/** Stage 3 method decorator (e.g. Node `--no-strip-types`). */
+export function step<T extends (...args: any[]) => any>(
+	originalMethod: T,
+	context: StepMethodDecoratorContext
+): T
+/**
+ * Wraps page-object methods in `test.step` for clearer Playwright reports.
+ * Supports both legacy (`experimentalDecorators`) and Stage 3 method decorators
+ * (e.g. when tests run under Node's `--no-strip-types` + modern emit).
+ */
+export function step(
+	target: object | ((...args: any[]) => any),
+	propertyKeyOrContext: string | symbol | StepMethodDecoratorContext,
+	descriptor?: TypedPropertyDescriptor<(...args: any[]) => any>
+): any {
+	if (
+		descriptor === undefined &&
+		isStage3MethodDecoratorContext(propertyKeyOrContext) &&
+		typeof target === 'function'
+	) {
+		const original = target as (...args: any[]) => any
+		const ctx = propertyKeyOrContext
+		const key = typeof ctx.name === 'string' ? ctx.name : String(ctx.name)
+		return async function (this: object, ...args: any[]) {
+			return await test.step(`${(this as { constructor: { name: string } }).constructor.name}.${key}`, async () => {
+				return original.apply(this, args)
 			})
 		}
-	} else {
-		console.error('Only supporting methods for step decorator.')
 	}
+
+	if (!descriptor?.value) {
+		throw new Error(
+			'step: expected a legacy method decorator with descriptor.value, or a Stage 3 method decorator'
+		)
+	}
+
+	const propertyKey = propertyKeyOrContext as string
+	const original = descriptor.value
+	descriptor.value = async function (this: object, ...args: any[]) {
+		return await test.step(`${(this as { constructor: { name: string } }).constructor.name}.${String(propertyKey)}`, async () => {
+			return original.apply(this, args)
+		})
+	}
+	return descriptor
 }
 
 export function repeatTest(
@@ -124,7 +190,7 @@ export function repeatTest(
 	const getName = (i: number) => `${name} (${i + 1} of ${times})`
 	for (let i = 0; i < times; i++) {
 		if (only) {
-			// eslint-disable-next-line no-only-tests/no-only-tests
+			// eslint-disable-next-line tldraw/no-focused-tests
 			test.only(getName(i), fn)
 		} else {
 			test(getName(i), fn)
@@ -135,25 +201,3 @@ export function repeatTest(
 
 repeatTest.only = (name: string, fn: (...args: any) => Promise<void>, { times = 5 } = {}) =>
 	repeatTest(name, fn, { times, only: true })
-
-const PROPAGATE_CHANGES_TIMEOUT = 100
-/**
- * Ensures that the provided expectations are met both before and after a page reload.
- *
- * @param fn - An asynchronous function containing the expectations to be tested.
- * @param page - The Playwright Page object representing the browser page.
- *
- * The function performs the following steps:
- * 1. Executes the provided expectations and ensures they pass.
- * 2. Waits for a specified timeout to allow optimistic changes to propagate to the server.
- * 3. Reloads the page.
- * 4. Executes the provided expectations again and ensures they pass.
- */
-export async function expectBeforeAndAfterReload(fn: () => Promise<void>, page: Page) {
-	await fn()
-	await sleep(PROPAGATE_CHANGES_TIMEOUT)
-	await page.reload()
-	const { newHomePage } = createFixtures(page)
-	await newHomePage.isLoaded()
-	await fn()
-}

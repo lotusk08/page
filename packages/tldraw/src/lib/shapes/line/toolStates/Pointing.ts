@@ -12,6 +12,7 @@ import {
 	structuredClone,
 } from '@tldraw/editor'
 
+// Minimum distance, in screen pixels, between two shift-clicked handles before we merge them
 const MINIMUM_DISTANCE_BETWEEN_SHIFT_CLICKED_HANDLES = 2
 
 export class Pointing extends StateNode {
@@ -23,14 +24,14 @@ export class Pointing extends StateNode {
 
 	override onEnter(info: { shapeId?: TLShapeId }) {
 		const { inputs } = this.editor
-		const { currentPagePoint } = inputs
+		const currentPagePoint = inputs.getCurrentPagePoint()
 
 		this.markId = undefined
 
 		// Previously created line shape that we might be extending
 		const shape = info.shapeId && this.editor.getShape<TLLineShape>(info.shapeId)
 
-		if (shape && inputs.shiftKey) {
+		if (shape && inputs.getShiftKey()) {
 			// Extending a previous shape
 			this.markId = this.editor.markHistoryStoppingPoint(`creating_line:${shape.id}`)
 			this.shape = shape
@@ -51,9 +52,13 @@ export class Pointing extends StateNode {
 			const nextPoint = maybeSnapToGrid(nudgedPoint, this.editor)
 			const points = structuredClone(this.shape.props.points)
 
+			// compare in screen space
+			const minDistance =
+				MINIMUM_DISTANCE_BETWEEN_SHIFT_CLICKED_HANDLES / this.editor.getZoomLevel()
+
 			if (
-				Vec.DistMin(endHandle, prevEndHandle, MINIMUM_DISTANCE_BETWEEN_SHIFT_CLICKED_HANDLES) ||
-				Vec.DistMin(nextPoint, endHandle, MINIMUM_DISTANCE_BETWEEN_SHIFT_CLICKED_HANDLES)
+				Vec.DistMin(endHandle, prevEndHandle, minDistance) ||
+				Vec.DistMin(nextPoint, endHandle, minDistance)
 			) {
 				// Don't add a new point if the distance between the last two points is too small
 				points[endHandle.id] = {
@@ -88,17 +93,23 @@ export class Pointing extends StateNode {
 			this.markId = this.editor.markHistoryStoppingPoint(`creating_line:${id}`)
 
 			const newPoint = maybeSnapToGrid(currentPagePoint, this.editor)
-			this.editor.createShapes<TLLineShape>([
+
+			this.editor.createShapes([
 				{
 					id,
 					type: 'line',
 					x: newPoint.x,
 					y: newPoint.y,
 					props: {
-						scale: this.editor.user.getIsDynamicResizeMode() ? 1 / this.editor.getZoomLevel() : 1,
+						scale: this.editor.getResizeScaleFactor(),
 					},
 				},
 			])
+
+			if (!this.editor.getShape(id)) {
+				this.cancel()
+				return
+			}
 
 			this.editor.select(id)
 			this.shape = this.editor.getShape(id)!
@@ -108,7 +119,7 @@ export class Pointing extends StateNode {
 	override onPointerMove() {
 		if (!this.shape) return
 
-		if (this.editor.inputs.isDragging) {
+		if (this.editor.inputs.getIsDragging()) {
 			const handles = this.editor.getShapeHandles(this.shape)
 			if (!handles) {
 				if (this.markId) this.editor.bailToMark(this.markId)
@@ -128,6 +139,11 @@ export class Pointing extends StateNode {
 
 	override onPointerUp() {
 		this.complete()
+	}
+
+	override onLongPress() {
+		// On a touch (coarse pointer) long-press, cancel the pending shape so it leaves nothing behind.
+		if (this.editor.getInstanceState().isCoarsePointer) this.cancel()
 	}
 
 	override onCancel() {

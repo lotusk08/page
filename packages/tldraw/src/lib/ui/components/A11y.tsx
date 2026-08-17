@@ -1,18 +1,19 @@
 import {
 	debugFlags,
 	Editor,
-	react,
-	stopEventPropagation,
 	TLGeoShape,
 	TLShapeId,
+	unsafe__withoutCapture,
 	useContainer,
 	useEditor,
 	useMaybeEditor,
+	useReactor,
 	useValue,
 } from '@tldraw/editor'
 import { memo, MouseEvent, useCallback, useEffect, useRef } from 'react'
 import { useA11y } from '../context/a11y'
 import { useTranslation } from '../hooks/useTranslation/useTranslation'
+import { suppressBackToContent } from './HelperButtons/BackToContent'
 import { TldrawUiButton } from './primitives/Button/TldrawUiButton'
 
 export function SkipToMainContent() {
@@ -22,11 +23,12 @@ export function SkipToMainContent() {
 
 	const handleNavigateToFirstShape = useCallback(
 		(e: MouseEvent | KeyboardEvent) => {
-			stopEventPropagation(e)
+			editor.markEventAsHandled(e)
 			button.current?.blur()
 			const shapes = editor.getCurrentPageShapesInReadingOrder()
 			if (!shapes.length) return
 			editor.setSelectedShapes([shapes[0].id])
+			suppressBackToContent(editor, editor.options.animationMediumMs)
 			editor.zoomToSelectionIfOffscreen(256, {
 				animation: {
 					duration: editor.options.animationMediumMs,
@@ -134,35 +136,39 @@ export function generateShapeAnnouncementMessage(args: {
 }
 
 /** @public */
-export const useSelectedShapesAnnouncer = () => {
+export function useSelectedShapesAnnouncer() {
 	const editor = useMaybeEditor()
 	const a11y = useA11y()
 	const msg = useTranslation()
 
-	useEffect(() => {
-		if (!editor) return
+	const rPrevSelectedShapeIds = useRef<string[]>([])
 
-		const announceSelectedShapes = (selectedShapeIds: TLShapeId[]) => {
-			const a11yLive = generateShapeAnnouncementMessage({
-				editor,
-				selectedShapeIds,
-				msg,
-			})
+	useReactor(
+		'announce selection',
+		() => {
+			if (!editor) return
 
-			if (a11yLive) {
-				a11y.announce({ msg: a11yLive })
+			const isInSelecting = editor.isIn('select.idle')
+			if (isInSelecting) {
+				const selectedShapeIds = editor.getSelectedShapeIds()
+				if (selectedShapeIds !== rPrevSelectedShapeIds.current) {
+					rPrevSelectedShapeIds.current = selectedShapeIds
+					unsafe__withoutCapture(() => {
+						const a11yLive = generateShapeAnnouncementMessage({
+							editor,
+							selectedShapeIds,
+							msg,
+						})
+
+						if (a11yLive) {
+							a11y.announce({ msg: a11yLive })
+						}
+					})
+				}
 			}
-		}
-
-		const stopListening = react('useSelectedShapesAnnouncer', () => {
-			const selectedShapes = editor.getSelectedShapeIds()
-			announceSelectedShapes(selectedShapes)
-		})
-
-		return () => {
-			stopListening()
-		}
-	}, [editor, a11y, msg])
+		},
+		[editor, a11y, msg]
+	)
 }
 
 const useA11yDebug = (msg: string | undefined) => {
@@ -178,14 +184,10 @@ const useA11yDebug = (msg: string | undefined) => {
 					'font-weight: normal'
 				)
 			}
+			const doc = container.ownerDocument
 			const handleKeyUp = (e: KeyboardEvent) => {
-				const el = document.activeElement
-				if (
-					e.key === 'Tab' &&
-					el &&
-					el !== document.body &&
-					!el.classList.contains('tl-container')
-				) {
+				const el = doc.activeElement
+				if (e.key === 'Tab' && el && el !== doc.body && !el.classList.contains('tl-container')) {
 					const label = el.getAttribute('aria-label') || el.getAttribute('title') || el.textContent
 					if (label) {
 						log(label)
@@ -197,8 +199,9 @@ const useA11yDebug = (msg: string | undefined) => {
 				log(msg)
 			}
 
-			document.addEventListener('keyup', handleKeyUp)
-			return () => document.removeEventListener('keyup', handleKeyUp)
+			doc.addEventListener('keyup', handleKeyUp)
+			return () => doc.removeEventListener('keyup', handleKeyUp)
 		}
+		return undefined
 	}, [container, msg])
 }

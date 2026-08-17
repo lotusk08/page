@@ -3,6 +3,7 @@ import { defineMessages } from '../../../utils/i18n'
 export interface RecentFile {
 	fileId: string
 	date: number
+	isPinned: boolean
 }
 
 export const messages = defineMessages({
@@ -10,8 +11,4 @@ export const messages = defineMessages({
 	toggleSidebar: { defaultMessage: 'Toggle sidebar' },
 	accountMenu: { defaultMessage: 'Account menu' },
 	fileMenu: { defaultMessage: 'File menu' },
-	appDebugFlags: { defaultMessage: 'App debug flags' },
-	langAccented: { defaultMessage: 'i18n: Accented' },
-	langLongString: { defaultMessage: 'i18n: Long String' },
-	langHighlightMissing: { defaultMessage: 'i18n: Highlight Missing' },
 })

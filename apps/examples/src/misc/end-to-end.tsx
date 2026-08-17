@@ -1,11 +1,18 @@
 import { getLicenseKey } from '@tldraw/dotcom-shared'
+import { createMermaidDiagram } from '@tldraw/mermaid'
 import { useEffect, useLayoutEffect } from 'react'
 import {
 	BaseBoxShapeUtil,
-	TLBaseShape,
+	Editor,
+	TLShape,
 	Tldraw,
+	VecModel,
+	allDefaultFontFaces,
+	b64Vecs,
 	createShapeId,
 	exportAs,
+	getArrowInfo,
+	mockUniqueId,
 	toRichText,
 	useActions,
 	useEditor,
@@ -16,9 +23,18 @@ import { EndToEndApi } from './EndToEndApi'
 ;(window as any).__tldraw_ui_event = { id: 'NOTHING_YET' }
 ;(window as any).__tldraw_editor_events = []
 
-type HtmlCssShape = TLBaseShape<'html', { html: string; css: string; w: number; h: number }>
+const HTML_TYPE = 'html' as const
+let nextMockShapeId = 0
+
+declare module 'tldraw' {
+	export interface TLGlobalShapePropsMap {
+		[HTML_TYPE]: { html: string; css: string; w: number; h: number }
+	}
+}
+
+type HtmlCssShape = TLShape<typeof HTML_TYPE>
 class HtmlCssShapeUtil extends BaseBoxShapeUtil<HtmlCssShape> {
-	static override type = 'html'
+	static override type = HTML_TYPE
 
 	override getDefaultProps(): { html: string; css: string; w: number; h: number } {
 		return { w: 100, h: 100, html: '', css: '' }
@@ -26,8 +42,10 @@ class HtmlCssShapeUtil extends BaseBoxShapeUtil<HtmlCssShape> {
 	override component(shape: HtmlCssShape) {
 		return <HtmlCssShapeComponent shape={shape} />
 	}
-	override indicator(shape: HtmlCssShape) {
-		return <rect width={shape.props.w} height={shape.props.h} />
+	override getIndicatorPath(shape: HtmlCssShape) {
+		const path = new Path2D()
+		path.rect(0, 0, shape.props.w, shape.props.h)
+		return path
 	}
 }
 function HtmlCssShapeComponent({ shape }: { shape: HtmlCssShape }) {
@@ -48,6 +66,12 @@ function HtmlCssShapeComponent({ shape }: { shape: HtmlCssShape }) {
 }
 
 export default function EndToEnd() {
+	// Use test license key if available, otherwise use the default
+	// Check if __TLDRAW_LICENSE_KEY__ was explicitly set (including null/undefined/empty string)
+	const testLicenseKey = (window as any).__TLDRAW_LICENSE_KEY__
+	const hasExplicitTestKey = Object.prototype.hasOwnProperty.call(window, '__TLDRAW_LICENSE_KEY__')
+	const licenseKey = hasExplicitTestKey ? testLicenseKey : getLicenseKey()
+
 	useLayoutEffect(() => {
 		if (customElements.get('custom-element')) return
 
@@ -94,7 +118,7 @@ export default function EndToEnd() {
 	return (
 		<div className="tldraw__editor">
 			<Tldraw
-				licenseKey={getLicenseKey()}
+				licenseKey={licenseKey}
 				onMount={(editor) => {
 					;(window as any).app = editor
 					;(window as any).editor = editor
@@ -119,15 +143,73 @@ function SneakyExportButton() {
 	const actions = useActions()
 
 	useEffect(() => {
+		const resetMockShapeIds = () => {
+			nextMockShapeId = 0
+			mockUniqueId(() => `mock-${nextMockShapeId++}`)
+		}
+
 		const api: EndToEndApi = {
 			exportAsSvg: () => actions['export-as-svg'].onSelect('unknown'),
 			exportAsFormat: (format) =>
 				exportAs(editor, editor.selectAll().getSelectedShapeIds(), { format, name: 'test' }),
 			createShapeId: () => createShapeId(),
+			resetMockShapeIds,
+			createMermaidDiagram: async (definition: string) => {
+				await createMermaidDiagram(editor, definition, {
+					blueprintRender: {
+						position: { x: 0, y: 0 },
+						centerOnPosition: false,
+					},
+				})
+			},
 			toRichText: (text: string) => toRichText(text),
+			preloadFonts: async () => {
+				// Load every default font face up front. Text geometry is measured from the
+				// loaded font, so anything that measures a shape before its font loads (e.g.
+				// laying out shapes by their measured bounds) would otherwise get fallback-font
+				// metrics until the real font swaps in.
+				await Promise.all(allDefaultFontFaces.map((font) => editor.fonts.ensureFontIsLoaded(font)))
+			},
+			b64VecsEncodePoints: (points: VecModel[]) => b64Vecs.encodePoints(points),
+			markAllArrowBindings: () => {
+				for (const shape of editor.getCurrentPageShapes()) {
+					if (!editor.isShapeOfType(shape, 'arrow')) continue
+
+					const info = getArrowInfo(editor, shape)
+					if (!info) continue
+
+					const transform = editor.getShapePageTransform(shape.id)
+
+					if (info.bindings.start) {
+						createArrowBindingMarker(editor, transform.applyToPoint(info.start.handle))
+					}
+
+					if (info.bindings.end) {
+						createArrowBindingMarker(editor, transform.applyToPoint(info.end.handle))
+					}
+				}
+			},
 		}
 		;(window as any).tldrawApi = api
 	}, [actions, editor])
 
 	return null
+}
+
+function createArrowBindingMarker(editor: Editor, pagePoint: VecModel) {
+	const markRadius = 3
+	editor.createShape({
+		type: 'geo',
+		x: pagePoint.x - markRadius,
+		y: pagePoint.y - markRadius,
+		props: {
+			geo: 'ellipse',
+			w: markRadius * 2,
+			h: markRadius * 2,
+			color: 'light-blue',
+			fill: 'none',
+			dash: 'solid',
+			size: 's',
+		},
+	})
 }

@@ -1,20 +1,12 @@
-import {
-	StateNode,
-	TLFrameShape,
-	TLGroupShape,
-	TLPointerEventInfo,
-	TLShapeId,
-} from '@tldraw/editor'
+import { StateNode, TLPointerEventInfo, TLShapeId } from '@tldraw/editor'
 
 export class Pointing extends StateNode {
 	static override id = 'pointing'
 
-	override onEnter() {
-		const zoomLevel = this.editor.getZoomLevel()
+	override onEnter(info: TLPointerEventInfo) {
+		const onlyEraseTopShape = info.accelKey
 		const currentPageShapesSorted = this.editor.getCurrentPageRenderingShapesSorted()
-		const {
-			inputs: { currentPagePoint },
-		} = this.editor
+		const currentPagePoint = this.editor.inputs.getCurrentPagePoint()
 
 		const erasing = new Set<TLShapeId>()
 
@@ -22,29 +14,25 @@ export class Pointing extends StateNode {
 
 		for (let n = currentPageShapesSorted.length, i = n - 1; i >= 0; i--) {
 			const shape = currentPageShapesSorted[i]
-			if (
-				this.editor.isShapeOrAncestorLocked(shape) ||
-				this.editor.isShapeOfType<TLGroupShape>(shape, 'group')
-			) {
+			if (this.editor.isShapeOrAncestorLocked(shape) || this.editor.isShapeOfType(shape, 'group')) {
 				continue
 			}
 
 			if (
 				this.editor.isPointInShape(shape, currentPagePoint, {
 					hitInside: false,
-					margin: this.editor.options.hitTestMargin / zoomLevel,
+					margin: this.editor.getHitTestMargin(),
 				})
 			) {
 				const hitShape = this.editor.getOutermostSelectableShape(shape)
-				// If we've hit a frame after hitting any other shape, stop here
-				if (
-					this.editor.isShapeOfType<TLFrameShape>(hitShape, 'frame') &&
-					erasing.size > initialSize
-				) {
+				// If we've hit a frame-like shape after hitting any other shape, stop here
+				if (this.editor.isShapeFrameLike(hitShape) && erasing.size > initialSize) {
 					break
 				}
 
 				erasing.add(hitShape.id)
+
+				if (onlyEraseTopShape) break
 			}
 		}
 
@@ -52,6 +40,7 @@ export class Pointing extends StateNode {
 	}
 
 	override onLongPress(info: TLPointerEventInfo) {
+		if (info.accelKey) return
 		this.startErasing(info)
 	}
 
@@ -62,13 +51,13 @@ export class Pointing extends StateNode {
 	}
 
 	override onPointerMove(info: TLPointerEventInfo) {
-		if (this.editor.inputs.isDragging) {
+		if (this.editor.inputs.getIsDragging()) {
 			this.startErasing(info)
 		}
 	}
 
-	override onPointerUp() {
-		this.complete()
+	override onPointerUp(info: TLPointerEventInfo) {
+		this.complete(info)
 	}
 
 	override onCancel() {
@@ -87,7 +76,7 @@ export class Pointing extends StateNode {
 		this.parent.transition('erasing', info)
 	}
 
-	complete() {
+	complete(info?: TLPointerEventInfo) {
 		const erasingShapeIds = this.editor.getErasingShapeIds()
 
 		if (erasingShapeIds.length) {
@@ -95,7 +84,7 @@ export class Pointing extends StateNode {
 			this.editor.deleteShapes(erasingShapeIds)
 		}
 
-		this.parent.transition('idle')
+		this.parent.transition('idle', info)
 	}
 
 	cancel() {

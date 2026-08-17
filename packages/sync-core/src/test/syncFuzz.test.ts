@@ -1,19 +1,20 @@
 import {
 	Editor,
-	TLArrowBinding,
-	TLArrowShape,
 	TLRecord,
 	TLStore,
+	UserRecordType,
 	computed,
 	createPresenceStateDerivation,
 	createTLSchema,
 	createTLStore,
+	createUserId,
 	isRecordsDiffEmpty,
 	mockUniqueId,
 	uniqueId,
 } from 'tldraw'
 import uuid from 'uuid-by-string'
 import readable from 'uuid-readable'
+import { vi } from 'vitest'
 import { prettyPrintDiff } from '../../../tldraw/src/test/testutils/pretty'
 import { TLSyncClient } from '../lib/TLSyncClient'
 import { FuzzEditor, Op } from './FuzzEditor'
@@ -23,7 +24,7 @@ import { TestSocketPair } from './TestSocketPair'
 
 const schema = createTLSchema()
 
-jest.mock('@tldraw/editor/src/lib/editor/managers/TickManager.ts', () => {
+vi.mock('@tldraw/editor/src/lib/editor/managers/TickManager/TickManager.ts', () => {
 	return {
 		TickManager: class {
 			start() {
@@ -84,12 +85,13 @@ class FuzzTestInstance extends RandomSource {
 				this.editor = new FuzzEditor(this.id, this.seed, this.store)
 			},
 			presence: createPresenceStateDerivation(
-				computed('', () => ({
-					id: this.id,
-					name: 'test',
-					color: 'red',
-					locale: 'en',
-				}))
+				computed('', () =>
+					UserRecordType.create({
+						id: createUserId(this.id),
+						name: 'test',
+						color: 'red',
+					})
+				)
 			)(this.store),
 		})
 
@@ -110,9 +112,9 @@ let totalNumShapes = 0
 let totalNumPages = 0
 
 function arrowsAreSound(editor: Editor) {
-	const arrows = editor.getCurrentPageShapes().filter((s): s is TLArrowShape => s.type === 'arrow')
+	const arrows = editor.getCurrentPageShapes().filter((s) => s.type === 'arrow')
 	for (const arrow of arrows) {
-		const bindings = editor.getBindingsFromShape<TLArrowBinding>(arrow, 'arrow')
+		const bindings = editor.getBindingsFromShape(arrow, 'arrow')
 		const terminalsSeen = new Set()
 		for (const binding of bindings) {
 			if (terminalsSeen.has(binding.props.terminal)) {
@@ -286,6 +288,10 @@ test('seed 6820615056006575 - undo/redo page integrity regression', () => {
 })
 test('seed 5279266392988747 - undo/redo page integrity regression', () => {
 	runTest(5279266392988747)
+})
+
+test('seed 8090628137862085 - duplicate index key regression', () => {
+	runTest(8090628137862085)
 })
 
 for (let i = 0; i < NUM_TESTS; i++) {

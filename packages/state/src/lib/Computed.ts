@@ -1,22 +1,37 @@
 /* eslint-disable prefer-rest-params */
 import { assert } from '@tldraw/utils'
 import { ArraySet } from './ArraySet'
-import { HistoryBuffer } from './HistoryBuffer'
 import { maybeCaptureParent, startCapturingParents, stopCapturingParents } from './capture'
 import { GLOBAL_START_EPOCH } from './constants'
 import { EMPTY_ARRAY, equals, haveParentsChanged, singleton } from './helpers'
+import { HistoryBuffer } from './HistoryBuffer'
 import { getGlobalEpoch, getIsReacting, getReactionEpoch } from './transactions'
 import { Child, ComputeDiff, RESET_VALUE, Signal } from './types'
 import { logComputedGetterWarning } from './warnings'
 
 /**
+ * A special symbol used to indicate that a computed signal has not been initialized yet.
+ * This is passed as the `previousValue` parameter to a computed signal function on its first run.
+ *
+ * @example
+ * ```ts
+ * const count = atom('count', 0)
+ * const double = computed('double', (prevValue) => {
+ *   if (isUninitialized(prevValue)) {
+ *     console.log('First computation!')
+ *   }
+ *   return count.get() * 2
+ * })
+ * ```
+ *
  * @public
  */
 export const UNINITIALIZED = Symbol.for('com.tldraw.state/UNINITIALIZED')
 /**
  * The type of the first value passed to a computed signal function as the 'prevValue' parameter.
+ * This type represents the uninitialized state of a computed signal before its first calculation.
  *
- * @see {@link isUninitialized}.
+ * @see {@link isUninitialized}
  * @public
  */
 export type UNINITIALIZED = typeof UNINITIALIZED
@@ -44,7 +59,25 @@ export function isUninitialized(value: any): value is UNINITIALIZED {
 	return value === UNINITIALIZED
 }
 
-/** @public */
+/**
+ * A singleton class used to wrap computed signal values along with their diffs.
+ * This class is used internally by the {@link withDiff} function to provide both
+ * the computed value and its diff to the signal system.
+ *
+ * @example
+ * ```ts
+ * const count = atom('count', 0)
+ * const double = computed('double', (prevValue) => {
+ *   const nextValue = count.get() * 2
+ *   if (isUninitialized(prevValue)) {
+ *     return nextValue
+ *   }
+ *   return withDiff(nextValue, nextValue - prevValue)
+ * })
+ * ```
+ *
+ * @public
+ */
 export const WithDiff = singleton(
 	'WithDiff',
 	() =>
@@ -56,9 +89,20 @@ export const WithDiff = singleton(
 		}
 )
 
-/** @public */
+/**
+ * Interface representing a value wrapped with its corresponding diff.
+ * Used in incremental computation to provide both the new value and the diff from the previous value.
+ *
+ * @public
+ */
 export interface WithDiff<Value, Diff> {
+	/**
+	 * The computed value.
+	 */
 	value: Value
+	/**
+	 * The diff between the previous and current value.
+	 */
 	diff: Diff
 }
 
@@ -89,7 +133,17 @@ export function withDiff<Value, Diff>(value: Value, diff: Diff): WithDiff<Value,
 }
 
 /**
- * Options for creating computed signals. Used when calling `computed`.
+ * Options for configuring computed signals. Used when calling `computed` or using the `@computed` decorator.
+ *
+ * @example
+ * ```ts
+ * const greeting = computed('greeting', () => `Hello ${name.get()}!`, {
+ *   historyLength: 10,
+ *   isEqual: (a, b) => a === b,
+ *   computeDiff: (oldVal, newVal) => ({ type: 'change', from: oldVal, to: newVal })
+ * })
+ * ```
+ *
  * @public
  */
 export interface ComputedOptions<Value, Diff> {
@@ -105,27 +159,41 @@ export interface ComputedOptions<Value, Diff> {
 	 */
 	historyLength?: number
 	/**
-	 * A method used to compute a diff between the atom's old and new values. If provided, it will not be used unless you also specify {@link AtomOptions.historyLength}.
+	 * A method used to compute a diff between the computed's old and new values. If provided, it will not be used unless you also specify {@link ComputedOptions.historyLength}.
 	 */
 	computeDiff?: ComputeDiff<Value, Diff>
 	/**
-	 * If provided, this will be used to compare the old and new values of the atom to determine if the value has changed.
+	 * If provided, this will be used to compare the old and new values of the computed to determine if the value has changed.
 	 * By default, values are compared using first using strict equality (`===`), then `Object.is`, and finally any `.equals` method present in the object's prototype chain.
 	 * @param a - The old value
 	 * @param b - The new value
-	 * @returns
+	 * @returns True if the values are equal, false otherwise.
 	 */
 	isEqual?(a: any, b: any): boolean
 }
 
 /**
- * A computed signal created via `computed`.
+ * A computed signal created via the `computed` function or `@computed` decorator.
+ * Computed signals derive their values from other signals and automatically update when their dependencies change.
+ * They use lazy evaluation, only recalculating when accessed and dependencies have changed.
+ *
+ * @example
+ * ```ts
+ * const firstName = atom('firstName', 'John')
+ * const lastName = atom('lastName', 'Doe')
+ * const fullName = computed('fullName', () => `${firstName.get()} ${lastName.get()}`)
+ *
+ * console.log(fullName.get()) // "John Doe"
+ * firstName.set('Jane')
+ * console.log(fullName.get()) // "Jane Doe"
+ * ```
  *
  * @public
  */
 export interface Computed<Value, Diff = unknown> extends Signal<Value, Diff> {
 	/**
-	 * Whether this computed child is involved in an actively-running effect graph.
+	 * Whether this computed signal is involved in an actively-running effect graph.
+	 * Returns true if there are any reactions or other computed signals depending on this one.
 	 * @public
 	 */
 	readonly isActivelyListening: boolean
@@ -142,6 +210,7 @@ export interface Computed<Value, Diff = unknown> extends Signal<Value, Diff> {
  * @internal
  */
 class __UNSAFE__Computed<Value, Diff = unknown> implements Computed<Value, Diff> {
+	readonly __isComputed = true as const
 	lastChangedEpoch = GLOBAL_START_EPOCH
 	lastTraversedEpoch = GLOBAL_START_EPOCH
 
@@ -158,7 +227,7 @@ class __UNSAFE__Computed<Value, Diff = unknown> implements Computed<Value, Diff>
 
 	children = new ArraySet<Child>()
 
-	// eslint-disable-next-line no-restricted-syntax
+	// eslint-disable-next-line tldraw/no-setter-getter
 	get isActivelyListening(): boolean {
 		return !this.children.isEmpty
 	}
@@ -225,31 +294,35 @@ class __UNSAFE__Computed<Value, Diff = unknown> implements Computed<Value, Diff>
 			const result = this.derive(this.state, this.lastCheckedEpoch)
 			const newState = result instanceof WithDiff ? result.value : result
 			const isUninitialized = this.state === UNINITIALIZED
-			if (isUninitialized || !this.isEqual(newState, this.state)) {
+			// `derive` may have advanced the epoch, so re-read it here, but only once — the whole
+			// commit below belongs to a single epoch.
+			const epoch = getGlobalEpoch()
+			if (isUninitialized || !this.isEqual(this.state, newState)) {
 				if (this.historyBuffer && !isUninitialized) {
 					const diff = result instanceof WithDiff ? result.diff : undefined
 					this.historyBuffer.pushEntry(
 						this.lastChangedEpoch,
-						getGlobalEpoch(),
+						epoch,
 						diff ??
-							this.computeDiff?.(this.state, newState, this.lastCheckedEpoch, getGlobalEpoch()) ??
+							this.computeDiff?.(this.state, newState, this.lastCheckedEpoch, epoch) ??
 							RESET_VALUE
 					)
 				}
-				this.lastChangedEpoch = getGlobalEpoch()
+				this.lastChangedEpoch = epoch
 				this.state = newState
 			}
 			this.error = null
-			this.lastCheckedEpoch = getGlobalEpoch()
+			this.lastCheckedEpoch = epoch
 
 			return this.state
 		} catch (e) {
 			// if a derived value throws an error, we reset the state to UNINITIALIZED
+			const epoch = getGlobalEpoch()
 			if (this.state !== UNINITIALIZED) {
 				this.state = UNINITIALIZED as unknown as Value
-				this.lastChangedEpoch = getGlobalEpoch()
+				this.lastChangedEpoch = epoch
 			}
-			this.lastCheckedEpoch = getGlobalEpoch()
+			this.lastCheckedEpoch = epoch
 			// we also clear the history buffer if an error was thrown
 			if (this.historyBuffer) {
 				this.historyBuffer.clear()
@@ -286,7 +359,19 @@ class __UNSAFE__Computed<Value, Diff = unknown> implements Computed<Value, Diff>
 	}
 }
 
+/**
+ * Singleton reference to the computed signal implementation class.
+ * Used internally by the library to create computed signal instances.
+ *
+ * @internal
+ */
 export const _Computed = singleton('Computed', () => __UNSAFE__Computed)
+
+/**
+ * Type alias for the computed signal implementation class.
+ *
+ * @internal
+ */
 export type _Computed = InstanceType<typeof __UNSAFE__Computed>
 
 function computedMethodLegacyDecorator(
@@ -437,7 +522,9 @@ export function getComputedInstance<Obj extends object, Prop extends keyof Obj>(
 }
 
 /**
- * Creates a computed signal.
+ * Creates a computed signal that derives its value from other signals.
+ * Computed signals automatically update when their dependencies change and use lazy evaluation
+ * for optimal performance.
  *
  * @example
  * ```ts
@@ -475,10 +562,10 @@ export function getComputedInstance<Obj extends object, Prop extends keyof Obj>(
  * }
  * ```
  *
- * @param name - The name of the signal.
- * @param compute - The function that computes the value of the signal.
- * @param options - Options for the signal.
- *
+ * @param name - The name of the signal for debugging purposes
+ * @param compute - The function that computes the value of the signal. Receives the previous value and last computed epoch
+ * @param options - Optional configuration for the computed signal
+ * @returns A new computed signal
  * @public
  */
 export function computed<Value, Diff = unknown>(
@@ -490,7 +577,23 @@ export function computed<Value, Diff = unknown>(
 	options?: ComputedOptions<Value, Diff>
 ): Computed<Value, Diff>
 /**
- * `@computed` decorator (TC39 decorators).
+ * TC39 decorator for creating computed methods in classes.
+ *
+ * @example
+ * ```ts
+ * class MyClass {
+ *   value = atom('value', 10)
+ *
+ *   @computed
+ *   doubled() {
+ *     return this.value.get() * 2
+ *   }
+ * }
+ * ```
+ *
+ * @param compute - The method to be decorated
+ * @param context - The decorator context provided by TypeScript
+ * @returns The decorated method
  * @public
  */
 export function computed<This extends object, Value>(
@@ -498,16 +601,48 @@ export function computed<This extends object, Value>(
 	context: ClassMethodDecoratorContext<This, () => Value>
 ): () => Value
 /**
- * `@computed` decorator (legacy typescript decorator syntax).
+ * Legacy TypeScript decorator for creating computed methods in classes.
  *
- * @public */
+ * @example
+ * ```ts
+ * class MyClass {
+ *   value = atom('value', 10)
+ *
+ *   @computed
+ *   doubled() {
+ *     return this.value.get() * 2
+ *   }
+ * }
+ * ```
+ *
+ * @param target - The class prototype
+ * @param key - The property key
+ * @param descriptor - The property descriptor
+ * @returns The modified property descriptor
+ * @public
+ */
 export function computed(
 	target: any,
 	key: string,
 	descriptor: PropertyDescriptor
 ): PropertyDescriptor
 /**
- * `@computed` decorator with options.
+ * Decorator factory for creating computed methods with options.
+ *
+ * @example
+ * ```ts
+ * class MyClass {
+ *   items = atom('items', [1, 2, 3])
+ *
+ *   @computed({ historyLength: 10 })
+ *   sum() {
+ *     return this.items.get().reduce((a, b) => a + b, 0)
+ *   }
+ * }
+ * ```
+ *
+ * @param options - Configuration options for the computed signal
+ * @returns A decorator function that can be applied to methods
  * @public
  */
 export function computed<Value, Diff = unknown>(
@@ -518,7 +653,17 @@ export function computed<Value, Diff = unknown>(
 		context: ClassMethodDecoratorContext<This, () => Value>
 	) => () => Value)
 
-/** @public */
+/**
+ * Implementation function that handles all computed signal creation and decoration scenarios.
+ * This function is overloaded to support multiple usage patterns:
+ * - Creating computed signals directly
+ * - Using as a TC39 decorator
+ * - Using as a legacy decorator
+ * - Using as a decorator factory with options
+ *
+ * @returns Either a computed signal instance or a decorator function depending on usage
+ * @public
+ */
 export function computed() {
 	if (arguments.length === 1) {
 		const options = arguments[0]
@@ -530,13 +675,12 @@ export function computed() {
 	}
 }
 
+import { isComputed as _isComputed } from './isComputed'
+
 /**
  * Returns true if the given value is a computed signal.
- *
- * @param value
- * @returns {value is Computed<any>}
  * @public
  */
 export function isComputed(value: any): value is Computed<any> {
-	return value && value instanceof _Computed
+	return _isComputed(value)
 }

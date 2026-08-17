@@ -1,41 +1,37 @@
-.shareMenu {
+.fileShareMenu {
 	min-width: 240px;
-}
-
-/* Copy button */
-
-.copyButtonIcon {
-	position: absolute;
-	right: 10px;
+	width: 240px;
+	max-width: 240px;
+	overflow: hidden;
 }
 
 /* QR Code */
 
-.qrCode {
+.fileShareMenuQrCode {
 	position: relative;
 	width: 216px;
 	height: 100%;
 	overflow: hidden;
 	border-radius: 4px;
-	padding: 8px;
-	border: 1px solid var(--tla-color-border);
-	background-color: var(--tla-color-panel);
+	padding: var(--tl-space-3);
+	border: 1px solid var(--tl-color-divider);
+	background-color: var(--tl-color-panel);
 }
 
-.qrCodeInner {
+.fileShareMenuQrCodeInner {
 	width: 100%;
 	height: auto;
 	border-radius: 3px;
 	pointer-events: all;
 }
 
-.qrCodeInner[data-theme='dark'] {
+.fileShareMenuQrCodeInner[data-theme='dark'] {
 	filter: invert(100%);
 }
 
 /* Export preview */
 
-.exportPreview {
+.fileShareMenuExportPreview {
 	position: relative;
 	width: 216px;
 	height: 100%;
@@ -45,73 +41,26 @@
 	justify-content: center;
 	overflow: hidden;
 	border-radius: 4px;
-	border: 1px solid var(--tla-color-border);
-	background-color: var(--tla-color-panel);
+	border: 1px solid var(--tl-color-divider);
+	background-color: var(--tl-color-panel);
 }
 
-.exportPreviewInner {
+.fileShareMenuExportPreviewInner {
 	width: auto;
 	height: auto;
 	max-height: 100%;
 	max-width: 100%;
 	pointer-events: all;
-	outline: 1px solid var(--tla-color-border);
+	outline: 1px solid var(--tl-color-divider);
 	box-sizing: content-box;
 }
 
-.exportPreviewSize {
+.fileShareMenuExportPreviewSize {
 	position: absolute;
 	bottom: 0px;
 	right: 0px;
-	background-color: var(--tla-color-panel);
+	background-color: var(--tl-color-panel);
 	padding: 1px 4px;
 	text-align: right;
 	border-top-left-radius: 4px;
-}
-
-/* Help state toggle */
-
-.helpButton {
-	all: unset;
-	position: absolute;
-	top: 0px;
-	right: 0px;
-	width: 40px;
-	height: 40px;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	color: var(--tla-color-text-3);
-	cursor: pointer;
-}
-
-.helpButton[data-active='true'] {
-	color: var(--tla-color-text-1);
-}
-
-@media (hover: hover) {
-	.helpButton:hover {
-		color: var(--tla-color-text-1);
-	}
-}
-
-/* Help item */
-
-.helpItem {
-	position: relative;
-	color: var(--tla-color-text-1);
-	font-weight: 400;
-	background-color: var(--tla-color-low);
-	border: 1px solid var(--tla-color-border);
-	border-radius: 6px;
-	font-size: 12px;
-	font-weight: 400;
-	line-height: 16px;
-	display: flex;
-	flex-direction: column;
-}
-
-.helpItem p {
-	margin: 0px;
-	padding: 12px;
 }

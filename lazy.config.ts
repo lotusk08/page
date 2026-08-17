@@ -21,7 +21,11 @@ const config = {
 	scripts: {
 		build: {
 			baseCommand: 'exit 0',
-			runsAfter: { prebuild: {}, 'refresh-assets': {}, 'build-i18n': {} },
+			runsAfter: {
+				prebuild: {},
+				'refresh-assets': {},
+				'build-i18n': {},
+			},
 			workspaceOverrides: {
 				'apps/vscode/*': { runsAfter: { 'refresh-assets': {} } },
 				'packages/*': {
@@ -55,33 +59,25 @@ const config = {
 				'apps/vscode/*': { runsAfter: { build: { in: 'self-only' } } },
 			},
 		},
+		// predev/prebuild are the css-copy scripts. They write generated, gitignored files
+		// (tldraw.css, commenting.css, ...) that lazy doesn't track as outputs, so a cache hit
+		// would skip regenerating a file that's missing on disk and vite would fail to resolve it.
+		// They're a few file copies, so just always run them.
+		predev: {
+			cache: 'none',
+		},
+		prebuild: {
+			cache: 'none',
+		},
 		e2e: {
 			cache: 'none',
 		},
 		'e2e-x10': {
 			cache: 'none',
 		},
-		'test-ci': {
-			baseCommand: 'yarn run -T jest',
-			runsAfter: { 'refresh-assets': {} },
-			cache: {
-				inputs: {
-					exclude: ['*.tsbuildinfo'],
-				},
-			},
-		},
-		'test-coverage': {
-			baseCommand: 'yarn run -T jest --coverage',
-			runsAfter: { 'refresh-assets': {} },
-		},
-		lint: {
+		context: {
 			execution: 'independent',
-			runsAfter: { 'build-types': {} },
-			cache: {
-				inputs: {
-					exclude: ['*.tsbuildinfo'],
-				},
-			},
+			cache: 'none',
 		},
 		'pack-tarball': {
 			parallel: false,

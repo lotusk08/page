@@ -25,6 +25,8 @@ export interface TldrawAppSessionState {
 	shareMenuActiveTab: 'share' | 'export' | 'publish' | 'anon-share'
 	sidebarActiveTab: 'recent' | 'groups' | 'shared' | 'drafts' | 'starred'
 	theme: 'light' | 'dark'
+	colorTheme: string
+	colorThemeBackground?: string
 	views: {
 		[key: string]: {
 			sort: 'recent' | 'newest' | 'oldest' | 'atoz' | 'ztoa'
@@ -41,23 +43,26 @@ export interface TldrawAppSessionState {
 	shouldShowWelcomeDialog?: boolean
 }
 
-let prev: TldrawAppSessionState = {
+const defaultSessionState: TldrawAppSessionState = {
 	createdAt: Date.now(),
 	_sidebarToggle: true,
 	isSidebarOpenMobile: false,
 	shareMenuActiveTab: 'share',
 	sidebarActiveTab: 'recent',
 	theme: 'light',
+	colorTheme: 'default',
 	views: {},
 	flags: {},
 	exportSettings: {
 		exportFormat: 'png',
 		exportTheme: 'auto',
 		exportBackground: true,
-		exportPadding: true,
+		exportPadding: false,
 	},
 	sidebarWidth: 260,
 }
+
+let prev: TldrawAppSessionState = { ...defaultSessionState }
 
 try {
 	const stored = getFromLocalStorage(STORAGE_KEY)
@@ -77,6 +82,7 @@ try {
 }
 
 const localSessionState = atom<TldrawAppSessionState>('session', prev)
+const colorThemePreview = atom<string | null>('colorThemePreview', null)
 
 export function getIsSidebarOpen() {
 	return (
@@ -96,15 +102,45 @@ export function useIsSidebarOpenMobile() {
 	return useValue('isSidebarOpenMobile', getIsSidebarOpenMobile, [])
 }
 
+export function getDefaultSessionState() {
+	return {
+		...defaultSessionState,
+		createdAt: Date.now(),
+	}
+}
+
 export function clearLocalSessionState() {
 	return deleteFromLocalStorage(STORAGE_KEY)
 }
+
+// we use this to help remove flashbangs on signout/signin
+export function resetLocalSessionStateButKeepTheme() {
+	const { theme: currentTheme, colorTheme, colorThemeBackground } = getLocalSessionStateUnsafe()
+	clearLocalSessionState()
+	const newState: TldrawAppSessionState = {
+		...getDefaultSessionState(),
+		theme: currentTheme,
+		colorTheme: colorTheme ?? 'default',
+		colorThemeBackground,
+	}
+	localSessionState.set(newState)
+	setInLocalStorage(STORAGE_KEY, JSON.stringify(newState))
+}
+
 export function getLocalSessionStateUnsafe() {
 	return localSessionState.__unsafe__getWithoutCapture()
 }
 
 export function getLocalSessionState() {
 	return localSessionState.get()
+}
+
+export function getColorThemePreview() {
+	return colorThemePreview.get()
+}
+
+export function setColorThemePreview(themeId: string | null) {
+	colorThemePreview.set(themeId)
 }
 
 export function toggleSidebar(open: boolean = !getIsSidebarOpen()) {

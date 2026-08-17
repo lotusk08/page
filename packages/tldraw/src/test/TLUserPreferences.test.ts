@@ -1,4 +1,5 @@
-import { TLUserPreferences, atom, createTLUser } from '@tldraw/editor'
+import { TLUserPreferences, atom, createTLCurrentUser } from '@tldraw/editor'
+import { vi } from 'vitest'
 import { TestEditor } from './TestEditor'
 
 let editor: TestEditor
@@ -28,7 +29,7 @@ describe('TLUserPreferences', () => {
 		})
 
 		editor = new TestEditor({
-			user: createTLUser({
+			user: createTLCurrentUser({
 				setUserPreferences: (preferences) => userPreferences.set(preferences),
 				userPreferences,
 			}),
@@ -59,10 +60,10 @@ describe('TLUserPreferences', () => {
 			locale: null,
 			name: null,
 		})
-		const setUserPreferences = jest.fn((preferences) => userPreferences.set(preferences))
+		const setUserPreferences = vi.fn((preferences) => userPreferences.set(preferences))
 
 		editor = new TestEditor({
-			user: createTLUser({
+			user: createTLCurrentUser({
 				setUserPreferences,
 				userPreferences,
 			}),
@@ -80,10 +81,10 @@ describe('TLUserPreferences', () => {
 			id: '123',
 			name: 'blah',
 		})
-		const setUserPreferences = jest.fn((preferences) => userPreferences.set(preferences))
+		const setUserPreferences = vi.fn((preferences) => userPreferences.set(preferences))
 
 		editor = new TestEditor({
-			user: createTLUser({
+			user: createTLCurrentUser({
 				setUserPreferences,
 				userPreferences,
 			}),
@@ -101,10 +102,10 @@ describe('TLUserPreferences', () => {
 			id: '123',
 			name: 'blah',
 		})
-		const setUserPreferences = jest.fn((preferences) => userPreferences.set(preferences))
+		const setUserPreferences = vi.fn((preferences) => userPreferences.set(preferences))
 
 		editor = new TestEditor({
-			user: createTLUser({
+			user: createTLCurrentUser({
 				setUserPreferences,
 				userPreferences,
 			}),

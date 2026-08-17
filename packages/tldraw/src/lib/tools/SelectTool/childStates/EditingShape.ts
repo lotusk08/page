@@ -1,17 +1,19 @@
 import {
+	activeElementShouldCaptureKeys,
 	StateNode,
 	TLCancelEventInfo,
 	TLCompleteEventInfo,
 	tlenv,
-	TLFrameShape,
 	TLPointerEventInfo,
 	TLShape,
-	TLTextShape,
 } from '@tldraw/editor'
 import { getTextLabels } from '../../../utils/shapes/shapes'
 import { renderPlaintextFromRichText } from '../../../utils/text/richText'
 import { getHitShapeOnCanvasPointerDown } from '../../selection-logic/getHitShapeOnCanvasPointerDown'
-import { updateHoveredShapeId } from '../../selection-logic/updateHoveredShapeId'
+import {
+	cancelUpdateHoveredShapeId,
+	updateHoveredShapeId,
+} from '../../selection-logic/updateHoveredShapeId'
 
 interface EditingShapeInfo {
 	isCreatingTextWhileToolLocked?: boolean
@@ -20,13 +22,21 @@ interface EditingShapeInfo {
 export class EditingShape extends StateNode {
 	static override id = 'editing_shape'
 
-	hitShapeForPointerUp: TLShape | null = null
+	hitLabelOnShapeForPointerUp: TLShape | null = null
 	private info = {} as EditingShapeInfo
+	private didPointerDownOnEditingShape = false
+
+	private isTextInputFocused(): boolean {
+		const container = this.editor.getContainer()
+		const doc = this.editor.getContainerDocument()
+		return container.contains(doc.activeElement) && activeElementShouldCaptureKeys(false, doc)
+	}
 
 	override onEnter(info: EditingShapeInfo) {
 		const editingShape = this.editor.getEditingShape()
 		if (!editingShape) throw Error('Entered editing state without an editing shape')
-		this.hitShapeForPointerUp = null
+		this.hitLabelOnShapeForPointerUp = null
+		this.didPointerDownOnEditingShape = false
 
 		this.info = info
 
@@ -34,26 +44,18 @@ export class EditingShape extends StateNode {
 			this.parent.setCurrentToolIdMask('text')
 		}
 
+		this.editor.setCursor({ type: 'default', rotation: 0 })
 		updateHoveredShapeId(this.editor)
 		this.editor.select(editingShape)
 	}
 
 	override onExit() {
-		const { editingShapeId } = this.editor.getCurrentPageState()
-		if (!editingShapeId) return
-
-		// Clear the editing shape
+		const hadEditingShape = !!this.editor.getEditingShapeId()
 		this.editor.setEditingShape(null)
 
-		updateHoveredShapeId.cancel()
+		cancelUpdateHoveredShapeId(this.editor)
 
-		const shape = this.editor.getShape(editingShapeId)!
-		const util = this.editor.getShapeUtil(shape)
-
-		// Check for changes on editing end
-		util.onEditEnd?.(shape)
-
-		if (this.info.isCreatingTextWhileToolLocked) {
+		if (this.info.isCreatingTextWhileToolLocked && hadEditingShape) {
 			this.parent.setCurrentToolIdMask(undefined)
 			this.editor.setCurrentTool('text', {})
 		}
@@ -62,13 +64,32 @@ export class EditingShape extends StateNode {
 	override onPointerMove(info: TLPointerEventInfo) {
 		// In the case where on pointer down we hit a shape's label, we need to check if the user is dragging.
 		// and if they are, we need to transition to translating instead.
-		if (this.hitShapeForPointerUp && this.editor.inputs.isDragging) {
+		if (this.hitLabelOnShapeForPointerUp && this.editor.inputs.getIsDragging()) {
 			if (this.editor.getIsReadonly()) return
-			if (this.hitShapeForPointerUp.isLocked) return
-			this.editor.select(this.hitShapeForPointerUp)
+			if (this.hitLabelOnShapeForPointerUp.isLocked) return
+
+			this.editor.select(this.hitLabelOnShapeForPointerUp)
 			this.parent.transition('translating', info)
-			this.hitShapeForPointerUp = null
+			this.hitLabelOnShapeForPointerUp = null
 			return
+		}
+
+		// Check if dragging from editing shape with blurred input
+		if (this.didPointerDownOnEditingShape && this.editor.inputs.isDragging) {
+			if (this.editor.getIsReadonly()) return
+
+			const editingShape = this.editor.getEditingShape()
+			if (!editingShape || editingShape.isLocked) return
+
+			if (!this.isTextInputFocused()) {
+				// Input blurred during drag - exit edit mode and start translating
+				this.editor.select(editingShape)
+				this.parent.transition('translating', info)
+				this.didPointerDownOnEditingShape = false
+				return
+			}
+			// Input still focused - user is selecting text, stay in edit mode
+			this.didPointerDownOnEditingShape = false
 		}
 
 		switch (info.target) {
@@ -81,7 +102,8 @@ export class EditingShape extends StateNode {
 	}
 
 	override onPointerDown(info: TLPointerEventInfo) {
-		this.hitShapeForPointerUp = null
+		this.hitLabelOnShapeForPointerUp = null
+		this.didPointerDownOnEditingShape = false
 
 		switch (info.target) {
 			// N.B. This bit of logic has a bit of history to it.
@@ -115,12 +137,12 @@ export class EditingShape extends StateNode {
 				const textLabel = textLabels.length === 1 ? textLabels[0] : undefined
 				// N.B. One nuance here is that we want empty text fields to be removed from the canvas when the user clicks away from them.
 				const isEmptyTextShape =
-					this.editor.isShapeOfType<TLTextShape>(editingShape, 'text') &&
+					this.editor.isShapeOfType(editingShape, 'text') &&
 					renderPlaintextFromRichText(this.editor, editingShape.props.richText).trim() === ''
 				if (textLabel && !isEmptyTextShape) {
 					const pointInShapeSpace = this.editor.getPointInShapeSpace(
 						selectingShape,
-						this.editor.inputs.currentPagePoint
+						this.editor.inputs.getCurrentPagePoint()
 					)
 					if (
 						textLabel.bounds.containsPoint(pointInShapeSpace, 0) &&
@@ -128,10 +150,11 @@ export class EditingShape extends StateNode {
 					) {
 						// it's a hit to the label!
 						if (selectingShape.id === editingShape.id) {
-							// If we clicked on the editing geo / arrow shape's label, do nothing
+							// Track click on editing shape for drag detection
+							this.didPointerDownOnEditingShape = true
 							return
 						} else {
-							this.hitShapeForPointerUp = selectingShape
+							this.hitLabelOnShapeForPointerUp = selectingShape
 
 							this.editor.markHistoryStoppingPoint('editing on pointer up')
 							this.editor.select(selectingShape.id)
@@ -140,8 +163,8 @@ export class EditingShape extends StateNode {
 					}
 				} else {
 					if (selectingShape.id === editingShape.id) {
-						// If we clicked on a frame, while editing its heading, cancel editing
-						if (this.editor.isShapeOfType<TLFrameShape>(selectingShape, 'frame')) {
+						// If we clicked on a frame-like shape while editing its heading, cancel editing
+						if (this.editor.isShapeFrameLike(selectingShape)) {
 							this.editor.setEditingShape(null)
 							this.parent.transition('idle', info)
 						}
@@ -164,17 +187,27 @@ export class EditingShape extends StateNode {
 	}
 
 	override onPointerUp(info: TLPointerEventInfo) {
+		if (this.didPointerDownOnEditingShape) {
+			this.didPointerDownOnEditingShape = false
+			if (!this.isTextInputFocused()) {
+				// We clicked on the text label, which blured the input.
+				// We want to stay in edit mode and select all the text.
+				this.editor.getRichTextEditor()?.commands.focus('all')
+				return
+			}
+		}
+
 		// If we're not dragging, and it's a hit to the label, begin editing the shape.
-		const hitShape = this.hitShapeForPointerUp
+		const hitShape = this.hitLabelOnShapeForPointerUp
 		if (!hitShape) return
-		this.hitShapeForPointerUp = null
+		this.hitLabelOnShapeForPointerUp = null
 
 		// Stay in edit mode to maintain flow of editing.
 		const util = this.editor.getShapeUtil(hitShape)
 		if (hitShape.isLocked) return
 
 		if (this.editor.getIsReadonly()) {
-			if (!util.canEditInReadOnly(hitShape)) {
+			if (!util.canEditInReadonly(hitShape)) {
 				this.parent.transition('pointing_shape', info)
 				return
 			}
@@ -196,10 +229,12 @@ export class EditingShape extends StateNode {
 	}
 
 	override onComplete(info: TLCompleteEventInfo) {
+		this.editor.getContainer().focus()
 		this.parent.transition('idle', info)
 	}
 
 	override onCancel(info: TLCancelEventInfo) {
+		this.editor.getContainer().focus()
 		this.parent.transition('idle', info)
 	}
 }
