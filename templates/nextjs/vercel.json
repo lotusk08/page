@@ -1,0 +1,4 @@
+{
+	"installCommand": "corepack enable && yarn workspaces focus tldraw-nextjs-app-example @tldraw/monorepo config",
+	"buildCommand": "cd ../../packages/tldraw && yarn prebuild && cd ../../templates/nextjs && yarn build"
+}
