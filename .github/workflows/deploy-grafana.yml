@@ -26,7 +26,11 @@ jobs:
   deploy:
     name: ${{ github.event_name == 'push' && 'Deploy grafana resources' || 'Validate grafana resources (dry run)' }}
     # Validate and push both need the Grafana secrets, which fork PRs don't get.
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    # The workflow itself needs to stay scoped to tldraw/tldraw too, since forks that
+    # merge from upstream inherit this file but not the secrets or Grafana project.
+    if: |
+      github.repository == 'tldraw/tldraw' &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)
     timeout-minutes: 10
     runs-on: ubuntu-latest
     concurrency: grafana-deploy-${{ github.event_name == 'push' && 'main' || github.ref }}

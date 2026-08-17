@@ -19,6 +19,8 @@ defaults:
 jobs:
   deploy:
     name: Deploy bemo to ${{ (github.ref == 'refs/heads/bemo-production' && 'production') || (github.ref == 'refs/heads/main' && 'staging') || 'preview'  }}
+    # Forks that merge from upstream inherit this file but not the deploy secrets.
+    if: github.repository == 'tldraw/tldraw'
     timeout-minutes: 15
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/bemo-production' && 'bemo-production' || 'bemo-canary' }}

@@ -16,6 +16,8 @@ defaults:
 jobs:
   publish:
     name: Publish editor extensions
+    # Forks that merge from upstream inherit this file but not the publish secrets.
+    if: github.repository == 'tldraw/tldraw'
     environment: vsce publish
     timeout-minutes: 15
     runs-on: ubuntu-latest

@@ -62,11 +62,15 @@ jobs:
 
   publish:
     name: Publish SDK packages
+    # Forks that merge from upstream inherit this file but not the npm publish secrets.
     if: |
-      github.event_name != 'pull_request' ||
+      github.repository == 'tldraw/tldraw' &&
       (
-        github.event.label.name == 'publish-packages' &&
-        github.event.pull_request.head.repo.full_name == github.repository
+        github.event_name != 'pull_request' ||
+        (
+          github.event.label.name == 'publish-packages' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        )
       )
     environment: npm deploy
     timeout-minutes: 60

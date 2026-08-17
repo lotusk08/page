@@ -26,9 +26,11 @@ jobs:
     runs-on: ubuntu-latest-16-cores-arm-open
     environment: ${{ github.ref == 'refs/heads/production' && 'deploy-production' || 'deploy-staging' }}
     concurrency: dotcom-${{ github.ref == 'refs/heads/production' && 'deploy-production' || github.ref }}
+    # Forks that merge from upstream inherit this file but not the deploy secrets.
     if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'dotcom-preview-please'))
+      github.repository == 'tldraw/tldraw' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'dotcom-preview-please')))
 
     steps:
       # - name: Notify initial start

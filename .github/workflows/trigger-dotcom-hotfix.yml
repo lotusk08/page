@@ -22,11 +22,13 @@ jobs:
     timeout-minutes: 20
     concurrency: dotcom-hotfix
     environment: npm deploy
+    # Forks that merge from upstream inherit this file but not the deploy secrets.
     if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' && 
-       github.event.pull_request.merged == true && 
-       github.event.label.name == 'dotcom-hotfix-please')
+      github.repository == 'tldraw/tldraw' &&
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.merged == true &&
+        github.event.label.name == 'dotcom-hotfix-please'))
 
     steps:
       - name: Generate a token
