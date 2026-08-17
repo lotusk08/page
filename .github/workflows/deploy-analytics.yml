@@ -28,6 +28,8 @@ defaults:
 jobs:
   deploy:
     name: Deploy analytics worker to ${{ (github.ref == 'refs/heads/production' && 'production') || (github.ref == 'refs/heads/main' && 'staging') || 'preview'  }}
+    # Forks that merge from upstream inherit this file but not the deploy secrets.
+    if: github.repository == 'tldraw/tldraw'
     timeout-minutes: 10
     runs-on: ubuntu-latest
     environment: ${{ github.ref == 'refs/heads/production' && 'deploy-production' || 'deploy-staging' }}

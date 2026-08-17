@@ -11,6 +11,8 @@ defaults:
 jobs:
   upload:
     name: 'Upload latest strings'
+    # Forks that merge from upstream inherit this file but not the Lokalise secrets.
+    if: github.repository == 'tldraw/tldraw'
     runs-on: ubuntu-latest
     environment: 'deploy-production'
 
