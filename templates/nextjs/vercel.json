@@ -1,4 +1,4 @@
 {
-	"installCommand": "corepack enable && yarn workspaces focus tldraw-nextjs-app-example @tldraw/monorepo config",
-	"buildCommand": "cd ../../packages/tldraw && yarn prebuild && cd ../../templates/nextjs && yarn build"
+	"installCommand": "[ -f ../../yarn.lock ] || { echo 'Vercel: enable \"Include files outside the root directory in the Build Step\" for this project'; exit 1; }; corepack yarn workspaces focus tldraw-nextjs-app-example @tldraw/monorepo config",
+	"buildCommand": "cd ../.. && corepack yarn workspace tldraw prebuild && corepack yarn tsc --build packages/tldraw/tsconfig.json && corepack yarn workspace tldraw-nextjs-app-example build"
 }
