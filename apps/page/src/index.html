@@ -17,6 +17,26 @@
 			console.createTask = () => {
 				// noop
 			}
+
+			// An error thrown while the entry module evaluates happens before React
+			// mounts, so the error boundary never sees it and the page renders as a
+			// blank white screen. Paint it instead.
+			addEventListener(
+				'error',
+				(event) => {
+					const root = document.getElementById('root')
+					if (!root || root.firstChild) return
+					const target = event.target
+					const src = (target && (target.src || target.href)) || event.filename
+					const detail =
+						event.message || (src ? 'could not load ' + src : 'a script failed to load')
+					root.textContent = 'Failed to start: ' + detail
+					root.setAttribute('style', 'padding:24px;font:14px/1.5 ui-monospace,monospace')
+				},
+				// Capture: a script that fails to load fires `error` on the element and
+				// never bubbles, which is exactly the case that leaves the page blank.
+				true
+			)
 		</script>
 		<script type="module" src="./index.tsx"></script>
 		<noscript>You need to enable JavaScript to run tldraw. ✌️</noscript>

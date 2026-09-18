@@ -99,9 +99,10 @@ function NoIndex({ children }: { children: React.ReactNode }) {
 	)
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-	const rootElement = document.getElementById('root')!
-	const root = createRoot(rootElement!)
+function mount() {
+	const rootElement = document.getElementById('root')
+	if (!rootElement) throw new Error('Missing #root element')
+	const root = createRoot(rootElement)
 	const main = (
 		<ErrorBoundary
 			fallback={(error) => <DefaultErrorFallback error={error} />}
@@ -114,7 +115,16 @@ document.addEventListener('DOMContentLoaded', () => {
 		</ErrorBoundary>
 	)
 	root.render(ENABLE_STRICT_MODE ? <StrictMode>{main}</StrictMode> : main)
-})
+}
+
+// Waiting on DOMContentLoaded unconditionally loses the race whenever this
+// module runs after the document already parsed: the listener never fires and
+// the page stays blank with nothing in the console.
+if (document.readyState === 'loading') {
+	document.addEventListener('DOMContentLoaded', mount)
+} else {
+	mount()
+}
 
 function RootMeta() {
 	return (
