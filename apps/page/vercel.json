@@ -1,0 +1,23 @@
+{
+	"framework": null,
+	"installCommand": "cd ../.. && corepack yarn workspaces focus page.stevehoang.com @tldraw/monorepo config",
+	"buildCommand": "cd ../.. && corepack yarn workspace tldraw prebuild && corepack yarn workspace @tldraw/commenting prebuild && corepack yarn workspace page.stevehoang.com build",
+	"outputDirectory": "dist",
+	"headers": [
+		{
+			"source": "/assets/(.*)",
+			"headers": [
+				{
+					"key": "Cache-Control",
+					"value": "public,max-age=31536000,immutable"
+				}
+			]
+		}
+	],
+	"rewrites": [
+		{
+			"source": "/(.*)",
+			"destination": "/"
+		}
+	]
+}

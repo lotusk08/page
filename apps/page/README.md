@@ -31,9 +31,11 @@ yarn preview-page    # build, then serve the output
 
 ## Deployment
 
-Vercel, configured in the **repo root** `vercel.json` — not here. The connected project builds from the repository root, and Vercel only reads `vercel.json` from its configured root directory, so a file in this folder is silently ignored.
+Vercel, configured in `vercel.json` here.
 
-The build installs this workspace, runs the `prebuild` step for `packages/tldraw` and `packages/commenting`, then builds to `apps/page/dist`. All routes rewrite to `/` for client-side routing.
+**The connected project must have Root Directory set to `apps/page`**, with "Include files outside the root directory in the Build Step" on. Vercel reads `vercel.json` only from the configured root directory, so with any other value this file is silently ignored, the default `yarn install` runs instead, and the build dies resolving the Yarn 4 lockfile with Yarn Classic. A root `vercel.json` is not an alternative — `/vercel.json` is gitignored in this repo.
+
+The build installs this workspace, runs the `prebuild` step for `packages/tldraw` and `packages/commenting`, then builds to `dist`. All routes rewrite to `/` for client-side routing.
 
 Install and build both go through `corepack yarn`. Vercel puts Yarn 1 ahead of the corepack shims on `PATH`, so a plain `yarn` runs Yarn Classic against this repo's Yarn 4 lockfile and fails to resolve it.
 
