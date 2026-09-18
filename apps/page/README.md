@@ -2,7 +2,15 @@
 
 An infinite canvas app built on the tldraw SDK, deployed at [page.stevehoang.com](https://page.stevehoang.com).
 
-It started as a copy of the SDK examples app (`apps/examples`), so it ships the same example browser and the same set of examples, with its own branding, port, and deploy config.
+It started as a copy of the SDK examples app (`apps/examples`), with its own branding, port, and deploy config.
+
+## Routes
+
+- `/` — the canvas, full screen, no sidebar. This is the site.
+- `/examples` — the example browser, kept for reference and not indexed.
+- `/<example-slug>` — a single example with the sidebar; add `/full` for the canvas alone.
+
+The SDK's `/develop` and `/end-to-end` routes are not part of this app.
 
 ## Development
 

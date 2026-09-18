@@ -102,10 +102,6 @@ export function ExamplePage({
 									</button>
 								)}
 							</label>
-							<a className="example__sidebar__action-row hoverable" href="/develop">
-								<CodeIcon />
-								<span>Develop</span>
-							</a>
 						</div>
 						<div className="example__sidebar__divider" />
 					</div>
@@ -149,10 +145,6 @@ export function ExamplePage({
 						)}
 					</ul>
 					<div className="example__sidebar__footer-links">
-						<a className="example__sidebar__footer-link hoverable" href="/develop">
-							<CodeIcon />
-							<span>Build with the tldraw SDK</span>
-						</a>
 						<a
 							className="example__sidebar__footer-link hoverable hoverable__small"
 							target="_blank"
@@ -458,19 +450,6 @@ function SearchIcon() {
 		<svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
 			<path
 				d="M6.5 1.5C3.73858 1.5 1.5 3.73858 1.5 6.5C1.5 9.26142 3.73858 11.5 6.5 11.5C7.65047 11.5 8.71022 11.1115 9.55542 10.4583L12.1464 13.0493C12.3417 13.2446 12.6583 13.2446 12.8536 13.0493C13.0488 12.8541 13.0488 12.5375 12.8536 12.3422L10.2929 9.78159C11.0454 8.90364 11.5 7.76158 11.5 6.5C11.5 3.73858 9.26142 1.5 6.5 1.5ZM2.5 6.5C2.5 4.29086 4.29086 2.5 6.5 2.5C8.70914 2.5 10.5 4.29086 10.5 6.5C10.5 8.70914 8.70914 10.5 6.5 10.5C4.29086 10.5 2.5 8.70914 2.5 6.5Z"
-				fill="currentColor"
-				fillRule="evenodd"
-				clipRule="evenodd"
-			/>
-		</svg>
-	)
-}
-
-function CodeIcon() {
-	return (
-		<svg width="15" height="15" viewBox="0 0 15 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-			<path
-				d="M5.08211 4.14645C5.27737 4.34171 5.27737 4.65829 5.08211 4.85355L2.93566 7L5.08211 9.14645C5.27737 9.34171 5.27737 9.65829 5.08211 9.85355C4.88684 10.0488 4.57026 10.0488 4.375 9.85355L1.875 7.35355C1.67974 7.15829 1.67974 6.84171 1.875 6.64645L4.375 4.14645C4.57026 3.95118 4.88684 3.95118 5.08211 4.14645ZM9.91789 4.14645C10.1132 3.95118 10.4297 3.95118 10.625 4.14645L13.125 6.64645C13.3203 6.84171 13.3203 7.15829 13.125 7.35355L10.625 9.85355C10.4297 10.0488 10.1132 10.0488 9.91789 9.85355C9.72263 9.65829 9.72263 9.34171 9.91789 9.14645L12.0643 7L9.91789 4.85355C9.72263 4.65829 9.72263 4.34171 9.91789 4.14645ZM8.10801 2.69231C8.37582 2.75926 8.53866 3.03064 8.4717 3.29846L6.4717 11.2985C6.40475 11.5663 6.13337 11.7291 5.86556 11.6622C5.59775 11.5952 5.43491 11.3238 5.50186 11.056L7.50186 3.056C7.56882 2.78819 7.8402 2.62535 8.10801 2.69231Z"
 				fill="currentColor"
 				fillRule="evenodd"
 				clipRule="evenodd"

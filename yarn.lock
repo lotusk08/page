@@ -27149,7 +27149,6 @@ __metadata:
     "@vitejs/plugin-react": "npm:^6.0.1"
     ag-grid-community: "npm:^32.3.3"
     ag-grid-react: "npm:^32.3.3"
-    axe-core: "npm:^4.10.3"
     classnames: "npm:^2.5.1"
     d3-geo: "npm:^3.1.1"
     lodash: "npm:^4.17.21"

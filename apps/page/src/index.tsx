@@ -12,8 +12,6 @@ import {
 import { ExamplePage } from './ExamplePage'
 import { examples } from './examples'
 import { ExampleWrapper } from './ExampleWrapper'
-import Develop from './misc/develop'
-import EndToEnd from './misc/end-to-end'
 
 const ENABLE_STRICT_MODE = false
 
@@ -37,21 +35,24 @@ const router = createBrowserRouter([
 		lazy: async () => {
 			const Component = await basicExample.loadComponent()
 			return {
-				element: (
-					<ExamplePage example={basicExample}>
-						<ExampleWrapper example={basicExample} component={Component} />
-					</ExamplePage>
-				),
+				element: <ExampleWrapper example={basicExample} component={Component} />,
 			}
 		},
 	},
 	{
-		path: 'develop',
-		lazy: async () => ({ element: <Develop /> }),
-	},
-	{
-		path: 'end-to-end',
-		lazy: async () => ({ element: <EndToEnd /> }),
+		path: 'examples',
+		lazy: async () => {
+			const Component = await basicExample.loadComponent()
+			return {
+				element: (
+					<NoIndex>
+						<ExamplePage example={basicExample}>
+							<ExampleWrapper example={basicExample} component={Component} />
+						</ExamplePage>
+					</NoIndex>
+				),
+			}
+		},
 	},
 	...examples.flatMap((exampleArray) =>
 		exampleArray.value.flatMap((example) => [
