@@ -439,7 +439,7 @@
 			}
 		},
 		{
-			"files": ["apps/examples/**/*"],
+			"files": ["apps/examples/**/*", "apps/page/**/*"],
 			"rules": {
 				"tldraw/no-setter-getter": "off",
 				"tldraw/no-direct-storage": "off",
