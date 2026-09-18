@@ -9,6 +9,7 @@ import {
 	setDefaultEditorAssetUrls,
 	setDefaultUiAssetUrls,
 } from 'tldraw'
+import { Canvas } from './Canvas'
 import { ExamplePage } from './ExamplePage'
 import { examples } from './examples'
 import { ExampleWrapper } from './ExampleWrapper'
@@ -32,12 +33,7 @@ const router = createBrowserRouter([
 	},
 	{
 		path: '/',
-		lazy: async () => {
-			const Component = await basicExample.loadComponent()
-			return {
-				element: <ExampleWrapper example={basicExample} component={Component} />,
-			}
-		},
+		lazy: async () => ({ element: <Canvas /> }),
 	},
 	{
 		path: 'examples',
@@ -130,6 +126,10 @@ function RootMeta() {
 	return (
 		<Helmet>
 			<title>page.stevehoang.com</title>
+			{/* Unlisted while unlicensed: the tldraw license does not permit using the
+			    SDK in a production environment without a key. Drop this, and
+			    public/robots.txt, once TLDRAW_LICENSE_KEY is set. */}
+			<meta name="robots" content="noindex, nofollow" />
 			<meta
 				name="keywords"
 				content="tldraw, whiteboard, react, collaborative whiteboard, online drawing, infinite canvas, library"

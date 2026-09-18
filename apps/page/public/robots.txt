@@ -1,0 +1,5 @@
+# Unlisted while unlicensed. The tldraw license does not permit using the SDK
+# in a production environment without a key, so this deployment is kept out of
+# search indexes. Delete this file once TLDRAW_LICENSE_KEY is set.
+User-agent: *
+Disallow: /

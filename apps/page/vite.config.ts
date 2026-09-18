@@ -97,6 +97,9 @@ export default defineConfig(({ mode }) => ({
 		exclude: ['@tldraw/assets'],
 	},
 	define: {
+		// Empty unless the deploy sets it. The SDK shows its production watermark
+		// without a key, and the tldraw license forbids removing that watermark.
+		'process.env.TLDRAW_LICENSE_KEY': JSON.stringify(process.env.TLDRAW_LICENSE_KEY ?? ''),
 		'process.env.TLDRAW_ENV': JSON.stringify(process.env.VERCEL_ENV ?? 'development'),
 		'process.env.TLDRAW_DEPLOY_ID': JSON.stringify(
 			process.env.VERCEL_GIT_COMMIT_SHA ?? `local-${Date.now()}`
